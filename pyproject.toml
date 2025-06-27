@@ -1,0 +1,90 @@
+[project]
+name = "perihelion-auth-manager"
+version = "0.1.0"
+description = "Secure, high-performance credential management system with ABAC/RBAC controls"
+authors = [
+    { name = "Tyler Zervas", email = "tz-dev@vectorweight.com" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.12"
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security :: Cryptography",
+    "Topic :: System :: Systems Administration :: Authentication/Directory",
+]
+
+dependencies = [
+    "keyring>=25.6.0",
+    "cryptography>=45.0.4",
+    "authlib>=1.6.0",
+    "pycasbin>=1.45.0",
+    "pyotp>=2.9",
+    "fido2>=2.0.0",
+    "pydantic>=2.11.7",
+    "structlog>=25.4.0",
+    "httpx>=0.28.1",
+    "click>=8.2.1",
+    "fastapi>=0.115.14",
+    "uvicorn>=0.34.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=25.1.0",
+    "ruff>=0.12.1",
+    "mypy>=1.16.1",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "pytest-asyncio>=1.0.0",
+    "pre-commit>=4.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/tzervas/perihelion-auth-manager"
+Repository = "https://github.com/tzervas/perihelion-auth-manager.git"
+Documentation = "https://github.com/tzervas/perihelion-auth-manager/docs"
+"Bug Tracker" = "https://github.com/tzervas/perihelion-auth-manager/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+select = ["E", "F", "B", "I", "N", "UP", "S", "BLE", "FBT", "A", "C4", "T20", "RET", "SIM", "RUF"]
+ignore = []
+
+[tool.ruff.per-file-ignores]
+"tests/*" = ["S101"]  # Allow assertions in tests
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.12"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+strict_optional = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --cov=perihelion_auth_manager --cov-report=term-missing"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
