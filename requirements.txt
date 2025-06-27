@@ -1,0 +1,8 @@
+# Git Credential Manager Requirements
+# No external dependencies required - uses only Python standard library
+# Platform-specific dependencies are handled by the system package manager
+
+# For development/testing (optional):
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
