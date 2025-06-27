@@ -20,18 +20,23 @@ classifiers = [
 ]
 
 dependencies = [
-    "keyring>=25.6.0",
-    "cryptography>=45.0.4",
-    "authlib>=1.6.0",
-    "pycasbin>=1.45.0",
-    "pyotp>=2.9",
-    "fido2>=2.0.0",
-    "pydantic>=2.11.7",
-    "structlog>=25.4.0",
-    "httpx>=0.28.1",
-    "click>=8.2.1",
-    "fastapi>=0.115.14",
-    "uvicorn>=0.34.3",
+    "keyring>=25.6.0",  # Cross-platform credential storage
+    "cryptography>=45.0.4",  # Core cryptographic operations
+    "authlib>=1.6.0",  # OAuth/OIDC support
+    "pycasbin>=1.45.0",  # RBAC implementation
+    "pyotp>=2.9",  # TOTP for MFA
+    "fido2>=2.0.0",  # FIDO2/WebAuthn support
+    "pydantic>=2.11.7",  # Data validation
+    "structlog>=25.4.0",  # Structured logging
+    "httpx>=0.28.1",  # HTTP client
+    "click>=8.2.1",  # CLI framework
+    "fastapi>=0.115.14",  # API framework
+    "uvicorn>=0.34.3",  # ASGI server
+    "argon2-cffi>=25.0.0",  # Password hashing
+    "python-memcached>=1.62",  # Policy caching
+    "prometheus-client>=0.20.0",  # Metrics
+    "opentelemetry-api>=1.23.0",  # Tracing
+    "opentelemetry-sdk>=1.23.0",  # Tracing SDK
 ]
 
 [project.optional-dependencies]
@@ -50,6 +55,9 @@ Homepage = "https://github.com/tzervas/perihelion-auth-manager"
 Repository = "https://github.com/tzervas/perihelion-auth-manager.git"
 Documentation = "https://github.com/tzervas/perihelion-auth-manager/docs"
 "Bug Tracker" = "https://github.com/tzervas/perihelion-auth-manager/issues"
+
+[project.scripts]
+perihelion = "perihelion_auth_manager.cli.entry_points:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
