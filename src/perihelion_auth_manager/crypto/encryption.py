@@ -192,7 +192,7 @@ def decrypt(ciphertext: bytes, key: bytes, nonce: bytes, associated_data: Option
         return plaintext.decode()
 
     except Exception as e:
-        raise EncryptionError(f"Failed to decrypt data: {e}")
+        raise EncryptionError(f"Failed to decrypt data: {e}") from e
 
 
 def encrypt_with_password(
