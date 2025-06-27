@@ -116,7 +116,7 @@ class StructuredJsonFormatter(logging.Formatter):
 
         # Add extra fields
         if hasattr(record, "event_dict"):
-            data.update(record.event_dict)
+            data |= record.event_dict
 
         # Add exception info if present
         if record.exc_info:
