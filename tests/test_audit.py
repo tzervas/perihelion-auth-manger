@@ -125,6 +125,54 @@ def test_json_logging(mock_file_handler):
         assert "level" in parsed_json
 
 
+import threading
+import io
+import sys
+import time
+
+def test_structlog_thread_safety(monkeypatch):
+    """Test that structlog logging is thread-safe and includes correct thread information."""
+    import structlog
+    import json
+
+    log_output = []
+    log_lock = threading.Lock()
+
+    # Patch the print function used by structlog to capture output in a thread-safe way
+    def thread_safe_print(msg, *args, **kwargs):
+        with log_lock:
+            log_output.append(msg)
+
+    monkeypatch.setattr("builtins.print", thread_safe_print)
+
+    logger = structlog.get_logger("thread_logger")
+
+    def log_in_thread(thread_id):
+        for i in range(5):
+            logger.info("thread_event", thread_id=thread_id, iteration=i)
+            time.sleep(0.01)
+
+    threads = []
+    for t_id in range(4):
+        t = threading.Thread(target=log_in_thread, args=(t_id,))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    # Now check that all log messages are present and contain correct thread_id
+    seen = set()
+    for entry in log_output:
+        parsed = json.loads(entry)
+        assert "thread_id" in parsed
+        assert "iteration" in parsed
+        seen.add((parsed["thread_id"], parsed["iteration"]))
+        # Optionally, check for thread name or other thread info if structlog is configured to include it
+
+    # There should be 4 threads * 5 iterations = 20 unique log entries
+    assert len(seen) == 20
+
 def test_structlog_configuration():
     """Test structlog configuration is applied as expected."""
     logger = structlog.get_logger("test_logger")
