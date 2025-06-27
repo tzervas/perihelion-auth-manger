@@ -117,7 +117,7 @@ def generate_key(
         return key, salt
 
     except Exception as e:
-        raise EncryptionError(f"Failed to generate key: {e}")
+        raise EncryptionError(f"Failed to generate key: {e}") from e
 
 
 def encrypt(data: str, key: bytes, associated_data: Optional[bytes] = None) -> Tuple[bytes, bytes]:
