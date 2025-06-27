@@ -6,6 +6,6 @@ authentication and authorization features, supporting both human and machine use
 across multiple platforms.
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 __author__ = "Tyler Zervas"
 __email__ = "tz-dev@vectorweight.com"
