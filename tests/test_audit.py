@@ -27,7 +27,7 @@ def test_logging_directory_permissions(mock_log_dir, tmp_path):
     os.makedirs(mock_path, mode=0o700, exist_ok=True)
 
     # Check log directory permissions
-    assert oct(os.stat(mock_path).st_mode)[-3:] == "700"
+    assert oct(os.stat(mock_path).st_mode).endswith("700")
 
 
 @patch("perihelion_auth_manager.audit.logger.logging.FileHandler")
