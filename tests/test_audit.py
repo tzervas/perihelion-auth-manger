@@ -18,11 +18,11 @@ def configure_logger():
 
 
 @patch("perihelion_auth_manager.audit.logger.get_log_dir")
-def test_logging_directory_permissions(mock_log_dir):
+def test_logging_directory_permissions(mock_log_dir, tmp_path):
     """Test log directory permissions are secure."""
-    # Mock log directory path
-    mock_path = "/mocked/path"
-    mock_log_dir.return_value = mock_path
+    # Use pytest's tmp_path fixture for an isolated directory
+    mock_path = tmp_path
+    mock_log_dir.return_value = str(mock_path)
 
     os.makedirs(mock_path, mode=0o700, exist_ok=True)
 
