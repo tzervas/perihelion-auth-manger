@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# Logs
+*.log
+logs/
+
+# macOS
+.DS_Store
+
+# Security
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
+*.p12
+*.pfx
+
+# Build
+*.spec
+*.manifest
+*.spec
+
+# Documentation
+site/
+docs/_build/
+
+# Distribution
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.temp/
+
+# Local development
+*.sqlite3
+*.db
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# UV
+.uv/
+.venv/
+
+# trunk
+.trunk/
