@@ -136,7 +136,7 @@ class KeyStore:
         except FileNotFoundError:
             raise
         except Exception as e:
-            raise EncryptionError(f"Failed to retrieve key: {e}")
+            raise EncryptionError(f"Failed to retrieve key: {e}") from e
         finally:
             # Clear sensitive data
             if "derived_key" in locals():
