@@ -50,9 +50,8 @@ def add_caller(logger: structlog.BoundLogger, _, event_dict: EventDict) -> Event
             frame.f_lineno,
             frame.f_code.co_name,
         )
-        if not any(
-            p in frame_info[0]
-            for p in ("structlog", "logging", __file__)
+        if all(
+            p not in frame_info[0] for p in ("structlog", "logging", __file__)
         ):
             event_dict.update(
                 {
