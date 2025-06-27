@@ -94,7 +94,7 @@ class KeyStore:
             os.chmod(meta_path, 0o600)
 
         except Exception as e:
-            raise EncryptionError(f"Failed to store key: {e}")
+            raise EncryptionError(f"Failed to store key: {e}") from e
         finally:
             # Clear sensitive data
             if "derived_key" in locals():
