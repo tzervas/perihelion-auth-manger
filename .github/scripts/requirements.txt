@@ -1,0 +1,4 @@
+# Requirements for branch hierarchy update script
+pyyaml>=6.0        # YAML parsing
+toml>=0.10.2       # TOML parsing
+python-dotenv>=1.0 # Environment variable management

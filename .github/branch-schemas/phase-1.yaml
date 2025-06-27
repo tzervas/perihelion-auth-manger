@@ -1,0 +1,41 @@
+# Branch hierarchy configuration for Phase 1
+# Variables can be defined in .env file or passed via command line
+# Example: PHASE=1 FEATURE_PREFIX=feature/${PHASE} python update_branch_hierarchy.py
+
+# Common configuration
+defaults: &defaults
+  update_strategy: rebase
+  protected: false
+
+# Feature branch prefix template
+feature_prefix: &feature_prefix "feature/${PHASE}-${COMPONENT}"
+
+branches:
+  - name: main
+    protected: true
+    children: ["${feature_prefix}-core-components"]
+
+  - name: "${feature_prefix}-core-components"
+    parent: main
+    update_strategy: merge
+    children:
+      - "${feature_prefix}/CRED-001-storage-foundation"
+      - "${feature_prefix}/CRED-002-encryption-layer"
+      - "${feature_prefix}/AUDIT-001-logging-framework"
+      - "${feature_prefix}/ZTA-001-policy-engine"
+
+  - <<: *defaults
+    name: "${feature_prefix}/CRED-001-storage-foundation"
+    parent: "${feature_prefix}-core-components"
+
+  - <<: *defaults
+    name: "${feature_prefix}/CRED-002-encryption-layer"
+    parent: "${feature_prefix}-core-components"
+
+  - <<: *defaults
+    name: "${feature_prefix}/AUDIT-001-logging-framework"
+    parent: "${feature_prefix}-core-components"
+
+  - <<: *defaults
+    name: "${feature_prefix}/ZTA-001-policy-engine"
+    parent: "${feature_prefix}-core-components"

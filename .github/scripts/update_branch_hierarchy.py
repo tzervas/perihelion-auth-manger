@@ -6,14 +6,18 @@ It supports complex parent-child relationships and custom update patterns.
 """
 
 import argparse
-import json
 import logging
 import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from string import Template
+from typing import Any, Dict, List, Optional, Set, Union
+
+import toml
+import yaml
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -226,11 +230,41 @@ class GitBranchManager:
             return False
 
 
-def load_branch_schema(schema_path: str) -> Dict[str, BranchNode]:
-    """Load and validate branch hierarchy schema from JSON file."""
+def load_config(path: str) -> Dict[str, Any]:
+    """Load configuration from YAML or TOML file."""
     try:
-        with open(schema_path) as f:
-            data = json.load(f)
+        with open(path) as f:
+            if path.endswith('.toml'):
+                return toml.load(f)
+            return yaml.safe_load(f)
+    except Exception as e:
+        logger.error(f"Error loading configuration from {path}: {e}")
+        raise
+
+def interpolate_templates(data: Union[Dict, List, str], env: Dict[str, str]) -> Any:
+    """Recursively interpolate environment variables in configuration."""
+    if isinstance(data, dict):
+        return {k: interpolate_templates(v, env) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [interpolate_templates(item, env) for item in data]
+    elif isinstance(data, str):
+        return Template(data).safe_substitute(env)
+    return data
+
+def load_branch_schema(schema_path: str, env_file: Optional[str] = None) -> Dict[str, BranchNode]:
+    """Load and validate branch hierarchy schema from YAML/TOML file."""
+    try:
+        # Load environment variables
+        env = os.environ.copy()
+        if env_file:
+            load_dotenv(env_file)
+            env.update(os.environ)
+
+        # Load and parse schema
+        data = load_config(schema_path)
+        
+        # Interpolate environment variables
+        data = interpolate_templates(data, env)
 
         hierarchy = {}
         for branch_data in data["branches"]:
@@ -274,7 +308,18 @@ def main():
         "--schema",
         "-s",
         required=True,
-        help="Path to JSON schema file defining branch hierarchy",
+        help="Path to YAML/TOML schema file defining branch hierarchy",
+    )
+    parser.add_argument(
+        "--env-file",
+        "-e",
+        help="Path to .env file for template variables",
+    )
+    parser.add_argument(
+        "--template-vars",
+        "-t",
+        help="Additional template variables in KEY=VALUE format",
+        action='append',
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true", help="Enable verbose logging"
@@ -282,11 +327,20 @@ def main():
 
     args = parser.parse_args()
 
+    # Set additional template variables from command line
+    if args.template_vars:
+        for var in args.template_vars:
+            try:
+                key, value = var.split('=', 1)
+                os.environ[key.strip()] = value.strip()
+            except ValueError:
+                logger.warning(f"Ignoring invalid template variable: {var}")
+
     if args.verbose:
         logger.setLevel(logging.DEBUG)
 
     try:
-        hierarchy = load_branch_schema(args.schema)
+        hierarchy = load_branch_schema(args.schema, args.env_file)
         manager = GitBranchManager(args.repo)
         success = manager.process_branch_hierarchy(hierarchy)
         sys.exit(0 if success else 1)

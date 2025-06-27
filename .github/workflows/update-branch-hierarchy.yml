@@ -6,7 +6,18 @@ on:
       schema:
         description: 'Branch schema file to use (relative to .github/branch-schemas)'
         required: true
-        default: 'phase-1.json'
+        default: 'phase-1.yaml'
+      env_file:
+        description: 'Environment file to use (relative to .github/branch-schemas)'
+        required: false
+        default: '.env'
+      phase:
+        description: 'Phase number for branch naming'
+        required: false
+        default: '1'
+      component:
+        description: 'Component identifier for branch naming'
+        required: false
       force:
         description: 'Force update (may discard local changes)'
         required: false
@@ -34,6 +45,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r .github/scripts/requirements.txt
 
       - name: Configure Git
         run: |
@@ -42,8 +57,16 @@ jobs:
 
       - name: Update branches
         run: |
+          # Set up environment variables
+          PHASE=${{ inputs.phase }}
+          COMPONENT=${{ inputs.component || format('PHASE-{0}', inputs.phase) }}
+          
+          # Run the branch updater
           python .github/scripts/update_branch_hierarchy.py \
-            --schema .github/branch-schemas/${{ inputs.schema || 'phase-1.json' }} \
+            --schema .github/branch-schemas/${{ inputs.schema }} \
+            --env-file .github/branch-schemas/${{ inputs.env_file }} \
+            --template-vars PHASE=${PHASE} \
+            --template-vars COMPONENT=${COMPONENT} \
             --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
