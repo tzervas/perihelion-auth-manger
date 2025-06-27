@@ -1,0 +1,49 @@
+name: Update Branch Hierarchy
+
+on:
+  workflow_dispatch:
+    inputs:
+      schema:
+        description: 'Branch schema file to use (relative to .github/branch-schemas)'
+        required: true
+        default: 'phase-1.json'
+      force:
+        description: 'Force update (may discard local changes)'
+        required: false
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+      - 'feature/PHASE-1-core-components'
+
+jobs:
+  update-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+      - name: Update branches
+        run: |
+          python .github/scripts/update_branch_hierarchy.py \
+            --schema .github/branch-schemas/${{ inputs.schema || 'phase-1.json' }} \
+            --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

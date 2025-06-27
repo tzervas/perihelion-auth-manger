@@ -1,0 +1,40 @@
+{
+    "branches": [
+        {
+            "name": "main",
+            "protected": true,
+            "children": ["feature/PHASE-1-core-components"]
+        },
+        {
+            "name": "feature/PHASE-1-core-components",
+            "parent": "main",
+            "children": [
+                "feature/PHASE-1/CRED-001-storage-foundation",
+                "feature/PHASE-1/CRED-002-encryption-layer",
+                "feature/PHASE-1/AUDIT-001-logging-framework",
+                "feature/PHASE-1/ZTA-001-policy-engine"
+            ],
+            "update_strategy": "merge"
+        },
+        {
+            "name": "feature/PHASE-1/CRED-001-storage-foundation",
+            "parent": "feature/PHASE-1-core-components",
+            "update_strategy": "rebase"
+        },
+        {
+            "name": "feature/PHASE-1/CRED-002-encryption-layer",
+            "parent": "feature/PHASE-1-core-components",
+            "update_strategy": "rebase"
+        },
+        {
+            "name": "feature/PHASE-1/AUDIT-001-logging-framework",
+            "parent": "feature/PHASE-1-core-components",
+            "update_strategy": "rebase"
+        },
+        {
+            "name": "feature/PHASE-1/ZTA-001-policy-engine",
+            "parent": "feature/PHASE-1-core-components",
+            "update_strategy": "rebase"
+        }
+    ]
+}
