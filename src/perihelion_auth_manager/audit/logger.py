@@ -79,12 +79,25 @@ def add_thread_info(_: Any, __: Any, event_dict: EventDict) -> EventDict:
 
 
 def sanitize_keys(_, __, event_dict: EventDict) -> EventDict:
-    """Sanitize log record keys."""
+    """Sanitize log record keys and values."""
     # Create new dict with sanitized keys
-    return {
-        key.replace(".", "_").replace("$", "_"): value
-        for key, value in event_dict.items()
-    }
+    sanitized = {}
+    for key, value in event_dict.items():
+        new_key = key.replace(".", "_").replace("$", "_")
+        if new_key in ("password", "token", "secret", "key", "credential"):
+            sanitized[new_key] = "***"
+        else:
+            sanitized[new_key] = value
+    return sanitized
+
+
+def rotate_logs(log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5) -> None:
+    """Configure log rotation and retention."""
+    log_file = log_dir / "perihelion.log"
+    log_handler = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=max_bytes, backupCount=backup_count
+    )
+    logging.getLogger().addHandler(log_handler)
 
 
 class StructuredJsonFormatter(logging.Formatter):
@@ -120,12 +133,16 @@ class StructuredJsonFormatter(logging.Formatter):
 def setup_logging(
     log_level: str = "INFO",
     correlation_id: Optional[str] = None,
+    max_log_size: int = 50 * 1024 * 1024,  # 50 MB
+    backup_count: int = 5,
 ) -> structlog.BoundLogger:
     """Setup structured logging.
 
     Args:
         log_level: Log level (default: INFO)
         correlation_id: Optional correlation ID for request tracing
+        max_log_size: Maximum size of a log file before rotation
+        backup_count: Number of backup files to keep
 
     Returns:
         Configured logger instance
@@ -177,8 +194,14 @@ def setup_logging(
     # Add correlation ID if provided
     if correlation_id:
         logger = logger.bind(correlation_id=correlation_id)
+    if not logger._logger.hasHandlers():
+        logging.getLogger().addHandler(console_handler)
+
     else:
         logger = logger.bind(correlation_id=str(uuid.uuid4()))
+
+    # Set up log rotation
+    rotate_logs(log_dir, max_log_size, backup_count)
 
     return logger
 
@@ -210,19 +233,30 @@ def audit_event(
     """
     logger = get_logger()
 
-    event = {
-        "event_type": event_type,
-        "user": user,
-        "success": success,
-    }
-
-    if details:
-        # Sanitize sensitive data
-        sanitized = {
-            k: "***" if k in ("token", "password", "secret") else v
-            for k, v in details.items()
+    try:
+        event = {
+            "event_type": event_type,
+            "user": user,
+            "success": success,
         }
-        event["details"] = sanitized
+
+        if details:
+            # Sanitize sensitive data
+            event["details"] = sanitize_keys(None, None, details)
+
+        if error:
+            event["error"] = {
+                "type": type(error).__name__,
+                "message": str(error),
+            }
+
+        if success:
+            logger.info("audit_event", **event)
+        else:
+            logger.error("audit_event", **event)
+
+    except Exception as e:
+        logger.error("audit_event_logging_failure", error=str(e))
 
     if error:
         event["error"] = {
