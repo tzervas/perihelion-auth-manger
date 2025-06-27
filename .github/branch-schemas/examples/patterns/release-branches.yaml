@@ -1,0 +1,91 @@
+# Release Branch Pattern
+# Use case: Managing releases with hotfixes and development branches
+
+# Common configurations
+defaults: &defaults
+  update_strategy: rebase
+  protected: false
+
+# Development branch configuration
+develop: &develop
+  update_strategy: merge
+  protected: true
+  update_rules:
+    pre_update_check: "pytest tests/"
+    post_update_check: "black src/ tests/"
+
+# Release branch configuration
+release: &release
+  update_strategy: merge
+  protected: true
+  update_rules:
+    pre_update_check: |
+      pytest tests/
+      safety check
+    post_update_check: |
+      black src/ tests/
+      pylint src/
+    require_reviews: 2
+    status_checks:
+      - "CI Tests"
+      - "Security Scan"
+      - "Integration Tests"
+
+# Hotfix branch configuration
+hotfix: &hotfix
+  <<: *defaults
+  update_rules:
+    pre_update_check: "pytest tests/"
+    post_update_check: "black src/ tests/"
+    require_reviews: 1
+    status_checks:
+      - "CI Tests"
+      - "Security Scan"
+
+# Dynamic branch prefixes
+prefixes:
+  release: &release_prefix "release/${VERSION}"
+  hotfix: &hotfix_prefix "hotfix/${VERSION}"
+  feature: &feature_prefix "feature/${FEATURE}"
+
+branches:
+  - name: main
+    protected: true
+    children: ["develop"]
+
+  - <<: *develop
+    name: develop
+    parent: main
+    children:
+      - *release_prefix
+      - *feature_prefix
+
+  - <<: *release
+    name: *release_prefix
+    parent: develop
+    children: [*hotfix_prefix]
+
+  - <<: *hotfix
+    name: *hotfix_prefix
+    parent: *release_prefix
+
+update_rules:
+  global:
+    protected_branch_pattern: "main|develop|release/.*"
+    require_signatures: true
+    require_linear_history: true
+    auto_delete_merged: true
+    merge_strategy:
+      type: merge
+      options:
+        --no-ff: true
+        --strategy: recursive
+        --strategy-option: theirs
+
+notifications:
+  slack:
+    channel: "#releases"
+    events: ["merge", "conflict"]
+  email:
+    recipients: ["releases@example.com"]
+    events: ["conflict", "failure"]

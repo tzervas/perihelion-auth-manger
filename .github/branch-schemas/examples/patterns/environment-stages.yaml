@@ -1,0 +1,124 @@
+# Environment-Based Pattern
+# Use case: Environment promotion pipeline with strict controls
+
+# Common configurations
+defaults: &defaults
+  protected: true
+  require_signatures: true
+
+# Environment branch configuration
+environment: &environment
+  <<: *defaults
+  update_strategy: ff-only
+  update_rules:
+    pre_update_check: |
+      pytest tests/
+      safety check
+    post_update_check: |
+      black src/ tests/
+      pylint src/
+    require_reviews: 2
+    status_checks:
+      - "CI Tests"
+      - "Security Scan"
+      - "Integration Tests"
+
+# Environment-specific configurations
+environments:
+  dev: &dev
+    <<: *environment
+    update_rules:
+      pre_update_check: "pytest tests/"
+      post_update_check: "black src/ tests/"
+      require_reviews: 1
+
+  staging: &staging
+    <<: *environment
+    update_rules:
+      <<: *environment.update_rules
+      status_checks:
+        - "CI Tests"
+        - "Security Scan"
+        - "Integration Tests"
+        - "Load Tests"
+        - "E2E Tests"
+
+  prod: &prod
+    <<: *environment
+    update_rules:
+      <<: *environment.update_rules
+      require_reviews: 3
+      status_checks:
+        - "CI Tests"
+        - "Security Scan"
+        - "Integration Tests"
+        - "Load Tests"
+        - "E2E Tests"
+        - "Compliance Check"
+      deployment_window:
+        weekday: [1-5]  # Monday-Friday
+        hour: [9-16]    # 9 AM - 4 PM
+
+branches:
+  - name: main
+    <<: *defaults
+    children: ["develop"]
+
+  - <<: *dev
+    name: develop
+    parent: main
+    children: ["staging"]
+
+  - <<: *staging
+    name: staging
+    parent: develop
+    children: ["production"]
+
+  - <<: *prod
+    name: production
+    parent: staging
+
+update_rules:
+  global:
+    protected_branch_pattern: "main|develop|staging|production"
+    require_signatures: true
+    require_linear_history: true
+    auto_delete_merged: false
+    merge_strategy:
+      type: merge
+      options:
+        --ff-only: true
+
+notifications:
+  slack:
+    channels:
+      develop: "#dev-deploys"
+      staging: "#staging-deploys"
+      production: "#prod-deploys"
+    events: ["deploy", "rollback", "failure"]
+  email:
+    groups:
+      develop: ["dev-team@example.com"]
+      staging: ["qa-team@example.com"]
+      production: ["ops-team@example.com", "security-team@example.com"]
+    events: ["deploy", "rollback", "failure"]
+  pagerduty:
+    service_ids:
+      staging: "STAG123"
+      production: "PROD456"
+    events: ["failure"]
+
+deployment:
+  environments:
+    develop:
+      url: "https://dev.example.com"
+      auto_deploy: true
+    staging:
+      url: "https://staging.example.com"
+      auto_deploy: false
+      approval_required: true
+    production:
+      url: "https://example.com"
+      auto_deploy: false
+      approval_required: true
+      rollback_enabled: true

@@ -1,0 +1,24 @@
+# Simple Feature Development Pattern
+# Use case: Basic feature development with direct relationship to main
+
+# Common configurations
+defaults: &defaults
+  update_strategy: rebase
+  protected: false
+
+# Feature branch configuration
+feature: &feature
+  update_strategy: rebase
+  protected: false
+  update_rules:
+    pre_update_check: "pytest tests/"
+    post_update_check: "black src/ tests/"
+
+branches:
+  - name: main
+    protected: true
+    children: ["feature/${FEATURE_NAME}"]
+
+  - <<: *feature
+    name: "feature/${FEATURE_NAME}"
+    parent: main

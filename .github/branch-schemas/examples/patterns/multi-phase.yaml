@@ -1,0 +1,55 @@
+# Multi-Phase Development Pattern
+# Use case: Large features split into phases with component branches
+
+# Common configurations
+defaults: &defaults
+  update_strategy: rebase
+  protected: false
+
+# Phase branch configuration
+phase: &phase
+  update_strategy: merge
+  protected: false
+  update_rules:
+    pre_update_check: "pytest tests/"
+    post_update_check: "black src/ tests/"
+
+# Component branch configuration
+component: &component
+  <<: *defaults
+  update_rules:
+    pre_update_check: "pytest tests/${COMPONENT}/"
+    post_update_check: "black src/${COMPONENT}/ tests/${COMPONENT}/"
+
+# Dynamic branch prefixes
+prefixes:
+  phase: &phase_prefix "feature/phase-${PHASE}"
+  component: &component_prefix "${phase_prefix}/${COMPONENT}"
+
+branches:
+  - name: main
+    protected: true
+    children: [*phase_prefix]
+
+  - <<: *phase
+    name: *phase_prefix
+    parent: main
+    children:
+      - "${phase_prefix}/component-${COMPONENT_A}"
+      - "${phase_prefix}/component-${COMPONENT_B}"
+
+  - <<: *component
+    name: "${phase_prefix}/component-${COMPONENT_A}"
+    parent: *phase_prefix
+
+  - <<: *component
+    name: "${phase_prefix}/component-${COMPONENT_B}"
+    parent: *phase_prefix
+
+update_rules:
+  global:
+    protected_branch_pattern: "main|feature/phase-\\d+"
+    require_reviews: 2
+    status_checks:
+      - "CI Tests"
+      - "Security Scan"
