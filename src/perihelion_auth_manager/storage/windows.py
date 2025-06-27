@@ -1,5 +1,6 @@
 """Windows credential storage using Windows Credential Manager."""
 
+import ctypes
 import json
 import os
 from datetime import datetime
@@ -8,6 +9,17 @@ from uuid import UUID
 
 import keyring
 from keyring.errors import PasswordDeleteError
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+# Windows API constants
+MEM_COMMIT = 0x1000
+MEM_RESERVE = 0x2000
+PAGE_READWRITE = 0x04
+PAGE_NOACCESS = 0x01
+MEM_RELEASE = 0x8000
 
 from .base import (
     CredentialMetadata,
@@ -18,28 +30,95 @@ from .base import (
 )
 
 
+def secure_zero_memory(ptr: int, size: int) -> None:
+    """Securely zero memory using Windows APIs."""
+    try:
+        ctypes.windll.kernel32.RtlSecureZeroMemory(ptr, size)
+    except Exception as e:
+        logger.error("failed_to_zero_memory", error=str(e))
+
+
 class WindowsSecureCredential:
     """Secure credential implementation for Windows."""
 
     def __init__(self, secret: str):
         """Initialize with secret value."""
-        self._secret = secret
+        self._secret = secret.encode()
         self._cleared = False
+        self._protected = False
+        self._ptr = None
+        
+        # Allocate secure memory
+        size = len(self._secret)
+        self._ptr = ctypes.windll.kernel32.VirtualAlloc(
+            None, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE
+        )
+        if not self._ptr:
+            raise CredentialStoreError("Failed to allocate secure memory")
+            
+        # Copy secret to secure memory
+        ctypes.memmove(self._ptr, self._secret, size)
+        self._size = size
 
     def get_secret(self) -> str:
         """Get the secret value securely."""
         if self._cleared:
             raise CredentialStoreError("Credential has been cleared")
-        return self._secret
+            
+        if self._protected:
+            # Make memory readable
+            if not ctypes.windll.kernel32.VirtualProtect(
+                self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+            ):
+                raise CredentialStoreError("Failed to unprotect memory")
+                
+        try:
+            # Read secret from secure memory
+            secret = ctypes.string_at(self._ptr, self._size)
+            return secret.decode()
+        finally:
+            if self._protected:
+                # Restore protection
+                ctypes.windll.kernel32.VirtualProtect(
+                    self._ptr, self._size, PAGE_NOACCESS, ctypes.byref(ctypes.c_ulong())
+                )
 
     def clear(self) -> None:
         """Clear the secret from memory."""
         if not self._cleared:
-            self._secret = ""
+            if self._ptr:
+                # Make memory writable
+                if self._protected:
+                    ctypes.windll.kernel32.VirtualProtect(
+                        self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+                    )
+                
+                # Securely zero memory
+                secure_zero_memory(self._ptr, self._size)
+                
+                # Free memory
+                ctypes.windll.kernel32.VirtualFree(self._ptr, 0, MEM_RELEASE)
+                
+            self._secret = b""
+            self._ptr = None
             self._cleared = True
+            logger.debug("cleared_secure_credential")
 
+    def secure_memory(self) -> None:
+        """Implement secure memory protections."""
+        if not self._cleared and not self._protected:
+            # Make memory non-readable/non-writable
+            if ctypes.windll.kernel32.VirtualProtect(
+                self._ptr, self._size, PAGE_NOACCESS, ctypes.byref(ctypes.c_ulong())
+            ):
+                self._protected = True
+                logger.debug("protected_secure_credential")
+            else:
+                raise CredentialStoreError("Failed to protect memory")
+    
     def __enter__(self) -> "WindowsSecureCredential":
         """Context manager entry."""
+        self.secure_memory()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -132,9 +211,18 @@ class WindowsCredentialStore(CredentialStore):
             raise CredentialStoreError(f"Failed to retrieve credential: {e}")
 
     def list_credentials(
-        self, platform: Optional[str] = None, username: Optional[str] = None
+        self,
+        platform: Optional[str] = None,
+        username: Optional[str] = None,
+        attributes: Optional[Dict[str, str]] = None,
     ) -> list[CredentialMetadata]:
-        """List stored credentials."""
+        """List stored credentials with optional filtering.
+        
+        Args:
+            platform: Optional platform filter
+            username: Optional username filter
+            attributes: Optional attribute-based filters matching metadata labels
+        """
         try:
             credentials = []
             for filename in os.listdir(self._metadata_dir):
@@ -144,13 +232,33 @@ class WindowsCredentialStore(CredentialStore):
                 credential_id = UUID(filename[:-5])
                 metadata = self._read_metadata(credential_id)
 
+                # Apply platform filter
                 if platform and metadata.platform != platform:
                     continue
+                    
+                # Apply username filter
                 if username and metadata.username != username:
                     continue
+                    
+                # Apply attribute filters
+                if attributes:
+                    matches = True
+                    for key, value in attributes.items():
+                        if metadata.labels.get(key) != value:
+                            matches = False
+                            break
+                    if not matches:
+                        continue
 
                 credentials.append(metadata)
-
+                
+            logger.debug(
+                "listed_credentials",
+                count=len(credentials),
+                platform=platform,
+                username=username,
+                attributes=attributes,
+            )
             return credentials
 
         except Exception as e:

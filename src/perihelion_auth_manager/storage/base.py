@@ -5,7 +5,11 @@ from datetime import datetime
 from typing import Dict, Optional, Protocol, runtime_checkable
 from uuid import UUID
 
+from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 class CredentialMetadata(BaseModel):
@@ -31,16 +35,37 @@ class SecureCredential(Protocol):
         ...
 
     def clear(self) -> None:
-        """Clear the secret from memory."""
+        """Clear the secret from memory.
+        
+        This must ensure the secret is securely wiped from memory
+        using techniques like overwriting with zeros.
+        """
+        ...
+
+    def secure_memory(self) -> None:
+        """Implement secure memory protections.
+        
+        This should:
+        1. Lock memory pages to prevent swapping
+        2. Mark memory as non-readable/non-writable when not in use
+        3. Apply memory sanitization on clear
+        """
         ...
 
     def __enter__(self) -> "SecureCredential":
-        """Context manager entry."""
-        ...
+        """Context manager entry.
+        
+        Automatically applies secure memory protections.
+        """
+        self.secure_memory()
+        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit."""
-        ...
+        """Context manager exit.
+        
+        Automatically clears secret and releases memory protections.
+        """
+        self.clear()
 
 
 class CredentialStore(ABC):
@@ -59,6 +84,13 @@ class CredentialStore(ABC):
         Raises:
             CredentialStoreError: If storage fails.
         """
+        logger.info(
+            "storing_credential",
+            credential_id=str(metadata.credential_id),
+            platform=metadata.platform,
+            username=metadata.username,
+            scope=metadata.scope,
+        )
         ...
 
     @abstractmethod
@@ -79,17 +111,27 @@ class CredentialStore(ABC):
 
     @abstractmethod
     def list_credentials(
-        self, platform: Optional[str] = None, username: Optional[str] = None
+        self,
+        platform: Optional[str] = None,
+        username: Optional[str] = None,
+        attributes: Optional[Dict[str, str]] = None,
     ) -> list[CredentialMetadata]:
         """List stored credential metadata.
 
         Args:
             platform: Optional platform filter.
             username: Optional username filter.
+            attributes: Optional attribute-based filters matching metadata labels.
 
         Returns:
             List of credential metadata.
         """
+        logger.debug(
+            "listing_credentials",
+            platform=platform,
+            username=username,
+            attributes=attributes,
+        )
         ...
 
     @abstractmethod
@@ -103,6 +145,10 @@ class CredentialStore(ABC):
             CredentialNotFoundError: If credential doesn't exist.
             CredentialStoreError: If deletion fails.
         """
+        logger.info(
+            "deleting_credential",
+            credential_id=str(credential_id),
+        )
         ...
 
     @abstractmethod
