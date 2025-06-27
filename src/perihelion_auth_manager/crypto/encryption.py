@@ -156,7 +156,7 @@ def encrypt(data: str, key: bytes, associated_data: Optional[bytes] = None) -> T
         return ciphertext, nonce
 
     except Exception as e:
-        raise EncryptionError(f"Failed to encrypt data: {e}")
+        raise EncryptionError(f"Failed to encrypt data: {e}") from e
 
 
 def decrypt(ciphertext: bytes, key: bytes, nonce: bytes, associated_data: Optional[bytes] = None) -> str:
