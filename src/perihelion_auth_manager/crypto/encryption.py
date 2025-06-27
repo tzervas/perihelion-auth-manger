@@ -5,17 +5,73 @@ import os
 import secrets
 from typing import Optional, Tuple
 
-from cryptography.hazmat.primitives import hashes, padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+# Initialize Argon2 hasher with recommended parameters
+ph = PasswordHasher(
+    time_cost=3,  # Number of iterations
+    memory_cost=65536,  # 64MB memory usage
+    parallelism=4,  # Number of parallel threads
+    hash_len=32,  # Length of the hash
+    salt_len=16,  # Length of the salt
+)
 
 
 class EncryptionError(Exception):
     """Base exception for encryption operations."""
 
 
+def hash_password(password: str) -> str:
+    """Hash a password using Argon2id.
+
+    Args:
+        password: The password to hash.
+
+    Returns:
+        The hashed password string.
+
+    Raises:
+        EncryptionError: If hashing fails.
+    """
+    try:
+        return ph.hash(password)
+    except Exception as e:
+        raise EncryptionError(f"Failed to hash password: {e}")
+
+
+def verify_password(password: str, hash_str: str) -> bool:
+    """Verify a password against its hash.
+
+    Args:
+        password: The password to verify.
+        hash_str: The hash string to verify against.
+
+    Returns:
+        True if the password matches, False otherwise.
+    """
+    try:
+        ph.verify(hash_str, password)
+        return True
+    except VerifyMismatchError:
+        return False
+    except Exception as e:
+        logger.error("password_verification_error", error=str(e))
+        return False
+
+
 def generate_key(
-    password: str, salt: Optional[bytes] = None, iterations: int = 100_000
+    password: str,
+    salt: Optional[bytes] = None,
+    iterations: int = 100_000,
+    use_scrypt: bool = True
 ) -> Tuple[bytes, bytes]:
     """Generate an encryption key from a password using PBKDF2.
 
@@ -34,21 +90,37 @@ def generate_key(
         if salt is None:
             salt = os.urandom(16)
 
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=salt,
-            iterations=iterations,
-        )
+        if use_scrypt:
+            # Use Scrypt for stronger key derivation
+            kdf = Scrypt(
+                salt=salt,
+                length=32,
+                n=2**16,  # CPU/memory cost factor
+                r=8,      # Block size parameter
+                p=1,      # Parallelization parameter
+            )
+        else:
+            # Fallback to PBKDF2 if Scrypt is not available
+            kdf = PBKDF2HMAC(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=salt,
+                iterations=iterations,
+            )
 
         key = kdf.derive(password.encode())
+        logger.debug(
+            "derived_key",
+            method="scrypt" if use_scrypt else "pbkdf2",
+            salt_size=len(salt),
+        )
         return key, salt
 
     except Exception as e:
         raise EncryptionError(f"Failed to generate key: {e}")
 
 
-def encrypt(data: str, key: bytes) -> Tuple[bytes, bytes]:
+def encrypt(data: str, key: bytes, associated_data: Optional[bytes] = None) -> Tuple[bytes, bytes]:
     """Encrypt data using AES-256-GCM.
 
     Args:
@@ -62,30 +134,32 @@ def encrypt(data: str, key: bytes) -> Tuple[bytes, bytes]:
         EncryptionError: If encryption fails.
     """
     try:
-        # Generate nonce
+        # Generate 96-bit nonce for GCM
         nonce = os.urandom(12)
 
-        # Create cipher
-        cipher = Cipher(
-            algorithms.AES256(key),
-            modes.GCM(nonce),
+        # Create AESGCM cipher
+        aesgcm = AESGCM(key)
+
+        # Encrypt data
+        data_bytes = data.encode()
+        ciphertext = aesgcm.encrypt(
+            nonce,
+            data_bytes,
+            associated_data,
         )
-        encryptor = cipher.encryptor()
 
-        # Add padding
-        padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(data.encode()) + padder.finalize()
-
-        # Encrypt
-        ciphertext = encryptor.update(padded_data) + encryptor.finalize()
-
-        return ciphertext + encryptor.tag, nonce
+        logger.debug(
+            "encrypted_data",
+            data_size=len(data_bytes),
+            has_associated_data=associated_data is not None
+        )
+        return ciphertext, nonce
 
     except Exception as e:
         raise EncryptionError(f"Failed to encrypt data: {e}")
 
 
-def decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> str:
+def decrypt(ciphertext: bytes, key: bytes, nonce: bytes, associated_data: Optional[bytes] = None) -> str:
     """Decrypt data using AES-256-GCM.
 
     Args:
@@ -100,25 +174,22 @@ def decrypt(ciphertext: bytes, key: bytes, nonce: bytes) -> str:
         EncryptionError: If decryption fails.
     """
     try:
-        # Split ciphertext and tag
-        tag = ciphertext[-16:]
-        ciphertext = ciphertext[:-16]
+        # Create AESGCM cipher
+        aesgcm = AESGCM(key)
 
-        # Create cipher
-        cipher = Cipher(
-            algorithms.AES256(key),
-            modes.GCM(nonce, tag),
+        # Decrypt data
+        plaintext = aesgcm.decrypt(
+            nonce,
+            ciphertext,
+            associated_data,
         )
-        decryptor = cipher.decryptor()
 
-        # Decrypt
-        padded_data = decryptor.update(ciphertext) + decryptor.finalize()
-
-        # Remove padding
-        unpadder = padding.PKCS7(128).unpadder()
-        data = unpadder.update(padded_data) + unpadder.finalize()
-
-        return data.decode()
+        logger.debug(
+            "decrypted_data",
+            data_size=len(plaintext),
+            has_associated_data=associated_data is not None
+        )
+        return plaintext.decode()
 
     except Exception as e:
         raise EncryptionError(f"Failed to decrypt data: {e}")
