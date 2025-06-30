@@ -229,7 +229,7 @@ class TestKeyStore:
         key_path = store.keys_dir / f"{key_id}.key"
         meta_path = store.meta_dir / f"{key_id}.json"
 
-        assert oct(os.stat(store.keys_dir).st_mode)[-3:] == "700"
-        assert oct(os.stat(store.meta_dir).st_mode)[-3:] == "700"
-        assert oct(os.stat(key_path).st_mode)[-3:] == "600"
-        assert oct(os.stat(meta_path).st_mode)[-3:] == "600"
+        assert oct(os.stat(store.keys_dir).st_mode).endswith("700")
+        assert oct(os.stat(store.meta_dir).st_mode).endswith("700")
+        assert oct(os.stat(key_path).st_mode).endswith("600")
+        assert oct(os.stat(meta_path).st_mode).endswith("600")
