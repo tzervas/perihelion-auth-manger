@@ -280,7 +280,7 @@ class WindowsCredentialStore(CredentialStore):
                 pass
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to delete credential: {e}")
+            raise CredentialStoreError(f"Failed to delete credential: {e}") from e
 
     def update_metadata(
         self, credential_id: UUID, metadata: CredentialMetadata
