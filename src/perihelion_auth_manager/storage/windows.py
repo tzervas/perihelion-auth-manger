@@ -189,7 +189,7 @@ class WindowsCredentialStore(CredentialStore):
             self._write_metadata(metadata)
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to store credential: {e}")
+            raise CredentialStoreError(f"Failed to store credential: {e}") from e
 
     def get_credential(self, credential_id: UUID) -> SecureCredential:
         """Retrieve a credential from Windows Credential Manager."""
