@@ -65,12 +65,11 @@ class WindowsSecureCredential:
         if self._cleared:
             raise CredentialStoreError("Credential has been cleared")
             
-        if self._protected:
-            # Make memory readable
-            if not ctypes.windll.kernel32.VirtualProtect(
-                self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
-            ):
-                raise CredentialStoreError("Failed to unprotect memory")
+        if self._protected and not ctypes.windll.kernel32.VirtualProtect(
+                        self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+                    ):
+            raise CredentialStoreError("Failed to unprotect memory")
+
                 
         try:
             # Read secret from secure memory
