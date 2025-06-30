@@ -91,7 +91,7 @@ class LibSecretStore(CredentialStore):
                     credential_id=UUID(data["credential_id"]),
                 )
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            raise CredentialNotFoundError(f"Metadata not found: {e}")
+            raise CredentialNotFoundError(f"Metadata not found: {e}") from e
 
     def _write_metadata(self, metadata: CredentialMetadata) -> None:
         """Write metadata to file."""
