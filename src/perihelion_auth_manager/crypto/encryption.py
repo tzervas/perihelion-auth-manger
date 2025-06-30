@@ -44,7 +44,7 @@ def hash_password(password: str) -> str:
     try:
         return ph.hash(password)
     except Exception as e:
-        raise EncryptionError(f"Failed to hash password: {e}")
+        raise EncryptionError(f"Failed to hash password: {e}") from e
 
 
 def verify_password(password: str, hash_str: str) -> bool:
