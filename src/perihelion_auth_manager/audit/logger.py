@@ -255,7 +255,14 @@ def audit_event(
             logger.error("audit_event", **event)
 
     except Exception as e:
-        logger.error("audit_event_logging_failure", error=str(e))
+        try:
+            logger.error("audit_event_logging_failure", error=str(e))
+        except Exception as log_exc:
+            import sys
+            print(
+                f"[audit_event_logging_failure] error={str(e)} logger_error={str(log_exc)} event={event}",
+                file=sys.stderr,
+            )
 
     if error:
         event["error"] = {
