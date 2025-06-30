@@ -84,24 +84,25 @@ class WindowsSecureCredential:
 
     def clear(self) -> None:
         """Clear the secret from memory."""
-        if not self._cleared:
-            if self._ptr:
-                # Make memory writable
-                if self._protected:
-                    ctypes.windll.kernel32.VirtualProtect(
-                        self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
-                    )
-                
-                # Securely zero memory
-                secure_zero_memory(self._ptr, self._size)
-                
-                # Free memory
-                ctypes.windll.kernel32.VirtualFree(self._ptr, 0, MEM_RELEASE)
-                
-            self._secret = b""
-            self._ptr = None
-            self._cleared = True
-            logger.debug("cleared_secure_credential")
+        if self._cleared:
+            return
+        if self._ptr:
+            # Make memory writable
+            if self._protected:
+                ctypes.windll.kernel32.VirtualProtect(
+                    self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+                )
+
+            # Securely zero memory
+            secure_zero_memory(self._ptr, self._size)
+
+            # Free memory
+            ctypes.windll.kernel32.VirtualFree(self._ptr, 0, MEM_RELEASE)
+
+        self._secret = b""
+        self._ptr = None
+        self._cleared = True
+        logger.debug("cleared_secure_credential")
 
     def secure_memory(self) -> None:
         """Implement secure memory protections."""
