@@ -207,7 +207,7 @@ class WindowsCredentialStore(CredentialStore):
             return WindowsSecureCredential(credential)
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to retrieve credential: {e}")
+            raise CredentialStoreError(f"Failed to retrieve credential: {e}") from e
 
     def list_credentials(
         self,
