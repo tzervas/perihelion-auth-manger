@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """Command-line interface for Perihelion Auth-Manager."""
 
 from typing import Any
