@@ -51,9 +51,8 @@ def add_caller(logger: structlog.BoundLogger, _, event_dict: EventDict) -> Event
             frame.f_lineno,
             frame.f_code.co_name,
         )
-        if not any(
-            p in frame_info[0]
-            for p in ("structlog", "logging", __file__)
+        if all(
+            p not in frame_info[0] for p in ("structlog", "logging", __file__)
         ):
             event_dict.update(
                 {
@@ -80,16 +79,25 @@ def add_thread_info(_: Any, __: Any, event_dict: EventDict) -> EventDict:
 
 
 def sanitize_keys(_, __, event_dict: EventDict) -> EventDict:
-    """Sanitize log record keys and values."""
-    # Create new dict with sanitized keys
-    sanitized = {}
-    for key, value in event_dict.items():
-        new_key = key.replace(".", "_").replace("$", "_")
-        if new_key in ("password", "token", "secret", "key", "credential"):
-            sanitized[new_key] = "***"
+    """Sanitize log record keys and values, recursively masking sensitive data."""
+    SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential"}
+
+    def _sanitize(obj):
+        if isinstance(obj, dict):
+            sanitized = {}
+            for key, value in obj.items():
+                new_key = key.replace(".", "_").replace("$", "_")
+                if new_key in SENSITIVE_KEYS:
+                    sanitized[new_key] = "***"
+                else:
+                    sanitized[new_key] = _sanitize(value)
+            return sanitized
+        elif isinstance(obj, list):
+            return [_sanitize(item) for item in obj]
         else:
-            sanitized[new_key] = value
-    return sanitized
+            return obj
+
+    return _sanitize(event_dict)
 
 
 def rotate_logs(log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5) -> None:
@@ -118,7 +126,7 @@ class StructuredJsonFormatter(logging.Formatter):
 
         # Add extra fields
         if hasattr(record, "event_dict"):
-            data.update(record.event_dict)
+            data |= record.event_dict
 
         # Add exception info if present
         if record.exc_info:
