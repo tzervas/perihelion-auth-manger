@@ -78,16 +78,25 @@ def add_thread_info(_: Any, __: Any, event_dict: EventDict) -> EventDict:
 
 
 def sanitize_keys(_, __, event_dict: EventDict) -> EventDict:
-    """Sanitize log record keys and values."""
-    # Create new dict with sanitized keys
-    sanitized = {}
-    for key, value in event_dict.items():
-        new_key = key.replace(".", "_").replace("$", "_")
-        if new_key in ("password", "token", "secret", "key", "credential"):
-            sanitized[new_key] = "***"
+    """Sanitize log record keys and values recursively, case-insensitive."""
+    SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential"}
+
+    def _sanitize(obj):
+        if isinstance(obj, dict):
+            sanitized = {}
+            for key, value in obj.items():
+                new_key = key.replace(".", "_").replace("$", "_")
+                if new_key.lower() in SENSITIVE_KEYS:
+                    sanitized[new_key] = "***"
+                else:
+                    sanitized[new_key] = _sanitize(value)
+            return sanitized
+        elif isinstance(obj, list):
+            return [_sanitize(item) for item in obj]
         else:
-            sanitized[new_key] = value
-    return sanitized
+            return obj
+
+    return _sanitize(event_dict)
 
 
 def rotate_logs(log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5) -> None:
