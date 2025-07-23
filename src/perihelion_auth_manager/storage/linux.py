@@ -80,9 +80,11 @@ class LibSecretStore(CredentialStore):
                 return CredentialMetadata(
                     created_at=datetime.fromisoformat(data["created_at"]),
                     updated_at=datetime.fromisoformat(data["updated_at"]),
-                    expires_at=datetime.fromisoformat(data["expires_at"])
-                    if data.get("expires_at")
-                    else None,
+                    expires_at=(
+                        datetime.fromisoformat(data["expires_at"])
+                        if data.get("expires_at")
+                        else None
+                    ),
                     description=data["description"],
                     scope=data["scope"],
                     labels=data["labels"],
@@ -106,9 +108,7 @@ class LibSecretStore(CredentialStore):
             json.dump(data, f, indent=2)
         os.chmod(path, 0o600)
 
-    def store_credential(
-        self, credential: str, metadata: CredentialMetadata
-    ) -> None:
+    def store_credential(self, credential: str, metadata: CredentialMetadata) -> None:
         """Store a credential using libsecret."""
         try:
             # Store the credential
@@ -129,7 +129,7 @@ class LibSecretStore(CredentialStore):
             self._write_metadata(metadata)
 
         except subprocess.CalledProcessError as e:
-            raise CredentialStoreError(f"Failed to store credential: {e}")
+            raise CredentialStoreError(f"Failed to store credential: {e}") from e
 
     def get_credential(self, credential_id: UUID) -> SecureCredential:
         """Retrieve a credential using libsecret."""
@@ -152,7 +152,7 @@ class LibSecretStore(CredentialStore):
             return LinuxSecureCredential(result.stdout.decode().strip())
 
         except subprocess.CalledProcessError as e:
-            raise CredentialStoreError(f"Failed to retrieve credential: {e}")
+            raise CredentialStoreError(f"Failed to retrieve credential: {e}") from e
 
     def list_credentials(
         self, platform: Optional[str] = None, username: Optional[str] = None
@@ -177,7 +177,7 @@ class LibSecretStore(CredentialStore):
             return credentials
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to list credentials: {e}")
+            raise CredentialStoreError(f"Failed to list credentials: {e}") from e
 
     def delete_credential(self, credential_id: UUID) -> None:
         """Delete a credential."""
@@ -197,7 +197,7 @@ class LibSecretStore(CredentialStore):
             os.unlink(self._get_metadata_path(credential_id))
 
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            raise CredentialStoreError(f"Failed to delete credential: {e}")
+            raise CredentialStoreError(f"Failed to delete credential: {e}") from e
 
     def update_metadata(
         self, credential_id: UUID, metadata: CredentialMetadata

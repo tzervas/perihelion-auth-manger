@@ -69,9 +69,11 @@ class KeychainStore(CredentialStore):
                 return CredentialMetadata(
                     created_at=datetime.fromisoformat(data["created_at"]),
                     updated_at=datetime.fromisoformat(data["updated_at"]),
-                    expires_at=datetime.fromisoformat(data["expires_at"])
-                    if data.get("expires_at")
-                    else None,
+                    expires_at=(
+                        datetime.fromisoformat(data["expires_at"])
+                        if data.get("expires_at")
+                        else None
+                    ),
                     description=data["description"],
                     scope=data["scope"],
                     labels=data["labels"],
@@ -80,7 +82,7 @@ class KeychainStore(CredentialStore):
                     credential_id=UUID(data["credential_id"]),
                 )
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            raise CredentialNotFoundError(f"Metadata not found: {e}")
+            raise CredentialNotFoundError(f"Metadata not found: {e}") from e
 
     def _write_metadata(self, metadata: CredentialMetadata) -> None:
         """Write metadata to file."""
@@ -95,9 +97,7 @@ class KeychainStore(CredentialStore):
             json.dump(data, f, indent=2)
         os.chmod(path, 0o600)
 
-    def store_credential(
-        self, credential: str, metadata: CredentialMetadata
-    ) -> None:
+    def store_credential(self, credential: str, metadata: CredentialMetadata) -> None:
         """Store a credential in Keychain."""
         try:
             # Store the credential
@@ -111,7 +111,7 @@ class KeychainStore(CredentialStore):
             self._write_metadata(metadata)
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to store credential: {e}")
+            raise CredentialStoreError(f"Failed to store credential: {e}") from e
 
     def get_credential(self, credential_id: UUID) -> SecureCredential:
         """Retrieve a credential from Keychain."""
@@ -122,14 +122,12 @@ class KeychainStore(CredentialStore):
             # Retrieve credential
             credential = keyring.get_password("perihelion", str(credential_id))
             if credential is None:
-                raise CredentialNotFoundError(
-                    f"Credential not found: {credential_id}"
-                )
+                raise CredentialNotFoundError(f"Credential not found: {credential_id}")
 
             return MacOSSecureCredential(credential)
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to retrieve credential: {e}")
+            raise CredentialStoreError(f"Failed to retrieve credential: {e}") from e
 
     def list_credentials(
         self, platform: Optional[str] = None, username: Optional[str] = None
@@ -154,7 +152,7 @@ class KeychainStore(CredentialStore):
             return credentials
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to list credentials: {e}")
+            raise CredentialStoreError(f"Failed to list credentials: {e}") from e
 
     def delete_credential(self, credential_id: UUID) -> None:
         """Delete a credential."""
@@ -173,7 +171,7 @@ class KeychainStore(CredentialStore):
                 pass
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to delete credential: {e}")
+            raise CredentialStoreError(f"Failed to delete credential: {e}") from e
 
     def update_metadata(
         self, credential_id: UUID, metadata: CredentialMetadata

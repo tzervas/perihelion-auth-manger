@@ -47,7 +47,7 @@ class WindowsSecureCredential:
         self._cleared = False
         self._protected = False
         self._ptr = None
-        
+
         # Allocate secure memory
         size = len(self._secret)
         self._ptr = ctypes.windll.kernel32.VirtualAlloc(
@@ -55,7 +55,7 @@ class WindowsSecureCredential:
         )
         if not self._ptr:
             raise CredentialStoreError("Failed to allocate secure memory")
-            
+
         # Copy secret to secure memory
         ctypes.memmove(self._ptr, self._secret, size)
         self._size = size
@@ -64,13 +64,12 @@ class WindowsSecureCredential:
         """Get the secret value securely."""
         if self._cleared:
             raise CredentialStoreError("Credential has been cleared")
-            
+
         if self._protected and not ctypes.windll.kernel32.VirtualProtect(
-                        self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
-                    ):
+            self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+        ):
             raise CredentialStoreError("Failed to unprotect memory")
 
-                
         try:
             # Read secret from secure memory
             secret = ctypes.string_at(self._ptr, self._size)
@@ -90,7 +89,10 @@ class WindowsSecureCredential:
             # Make memory writable
             if self._protected:
                 ctypes.windll.kernel32.VirtualProtect(
-                    self._ptr, self._size, PAGE_READWRITE, ctypes.byref(ctypes.c_ulong())
+                    self._ptr,
+                    self._size,
+                    PAGE_READWRITE,
+                    ctypes.byref(ctypes.c_ulong()),
                 )
 
             # Securely zero memory
@@ -115,7 +117,7 @@ class WindowsSecureCredential:
                 logger.debug("protected_secure_credential")
             else:
                 raise CredentialStoreError("Failed to protect memory")
-    
+
     def __enter__(self) -> "WindowsSecureCredential":
         """Context manager entry."""
         self.secure_memory()
@@ -149,9 +151,11 @@ class WindowsCredentialStore(CredentialStore):
                 return CredentialMetadata(
                     created_at=datetime.fromisoformat(data["created_at"]),
                     updated_at=datetime.fromisoformat(data["updated_at"]),
-                    expires_at=datetime.fromisoformat(data["expires_at"])
-                    if data.get("expires_at")
-                    else None,
+                    expires_at=(
+                        datetime.fromisoformat(data["expires_at"])
+                        if data.get("expires_at")
+                        else None
+                    ),
                     description=data["description"],
                     scope=data["scope"],
                     labels=data["labels"],
@@ -174,9 +178,7 @@ class WindowsCredentialStore(CredentialStore):
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
-    def store_credential(
-        self, credential: str, metadata: CredentialMetadata
-    ) -> None:
+    def store_credential(self, credential: str, metadata: CredentialMetadata) -> None:
         """Store a credential in Windows Credential Manager."""
         try:
             # Store the credential
@@ -201,9 +203,7 @@ class WindowsCredentialStore(CredentialStore):
             # Retrieve credential
             credential = keyring.get_password("perihelion", str(credential_id))
             if credential is None:
-                raise CredentialNotFoundError(
-                    f"Credential not found: {credential_id}"
-                )
+                raise CredentialNotFoundError(f"Credential not found: {credential_id}")
 
             return WindowsSecureCredential(credential)
 
@@ -217,7 +217,7 @@ class WindowsCredentialStore(CredentialStore):
         attributes: Optional[Dict[str, str]] = None,
     ) -> list[CredentialMetadata]:
         """List stored credentials with optional filtering.
-        
+
         Args:
             platform: Optional platform filter
             username: Optional username filter
@@ -235,11 +235,11 @@ class WindowsCredentialStore(CredentialStore):
                 # Apply platform filter
                 if platform and metadata.platform != platform:
                     continue
-                    
+
                 # Apply username filter
                 if username and metadata.username != username:
                     continue
-                    
+
                 # Apply attribute filters
                 if attributes:
                     matches = True
@@ -251,7 +251,7 @@ class WindowsCredentialStore(CredentialStore):
                         continue
 
                 credentials.append(metadata)
-                
+
             logger.debug(
                 "listed_credentials",
                 count=len(credentials),
@@ -262,7 +262,7 @@ class WindowsCredentialStore(CredentialStore):
             return credentials
 
         except Exception as e:
-            raise CredentialStoreError(f"Failed to list credentials: {e}")
+            raise CredentialStoreError(f"Failed to list credentials: {e}") from e
 
     def delete_credential(self, credential_id: UUID) -> None:
         """Delete a credential."""
