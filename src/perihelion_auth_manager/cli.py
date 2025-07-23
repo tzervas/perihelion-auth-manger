@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
+
 """Command-line interface for Perihelion Auth-Manager."""
 
+from typing import Any
 import base64
 import os
 import uuid
-from typing import Any, Optional
 
 import click
 
@@ -27,7 +29,7 @@ def add_credential(
     username: str,
     password: str,
     description: str,
-    labels: Optional[list[str]] = None,
+    labels: list[str] | None = None,
 ) -> None:
     """Add a new credential."""
     labels = labels or []
@@ -86,7 +88,7 @@ def get_key(key_id: str, password: str) -> None:
 @click.option("--platform", default=None, help="Filter by platform.")
 @click.option("--username", default=None, help="Filter by username.")
 def list_credentials(
-    platform: Optional[str] = None, username: Optional[str] = None
+    platform: str | None = None, username: str | None = None
 ) -> None:
     """List stored credentials."""
     store = get_platform_store()
@@ -124,7 +126,7 @@ def delete_key(key_id: str) -> None:
 def update_key_metadata(
     key_id: str,
     description: str,
-    labels: Optional[list[str]] = None,
+    labels: list[str] | None = None,
 ) -> None:
     """Update key metadata."""
     store = KeyStore()
