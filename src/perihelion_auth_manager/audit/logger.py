@@ -5,29 +5,68 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 import platform
+import stat
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import structlog
 from structlog.types import EventDict, Processor
 
 
-def get_log_dir() -> Path:
-    """Get platform-specific log directory."""
-    system = platform.system().lower()
-    if system == "windows":
-        base = Path.home() / "AppData/Local/Perihelion/Logs"
-    elif system == "darwin":
-        base = Path.home() / "Library/Logs/Perihelion"
-    else:  # Linux and others
-        base = Path.home() / ".local/share/perihelion/logs"
+def get_log_dir(base_dir: Union[str, Path, None] = None) -> Path:
+    """Get normalized log directory path.
+    
+    Args:
+        base_dir: Base directory for logs. If None, uses ~/.local/log
+        
+    Returns:
+        Resolved Path object for log directory
+    """
+    if base_dir is None:
+        base_dir = Path.home() / ".local" / "log"
+    return Path(base_dir).resolve()
 
-    os.makedirs(base, mode=0o700, exist_ok=True)
-    return base
+
+def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> RotatingFileHandler:
+    """Create a secure RotatingFileHandler with proper permissions.
+    
+    Args:
+        log_path: Path to the log file
+        max_bytes: Maximum size of each log file
+        backup_count: Number of backup files to keep
+        
+    Returns:
+        Configured RotatingFileHandler instance
+    """
+    # Create parent directory with secure permissions
+    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    
+    # Open file with secure permissions from creation
+    fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT, 
+                 stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
+    os.close(fd)
+    
+    return RotatingFileHandler(str(log_path), maxBytes=max_bytes,
+                             backupCount=backup_count)
+
+
+def get_handler(logger: logging.Logger) -> Optional[RotatingFileHandler]:
+    """Check if a RotatingFileHandler already exists in the logger.
+    
+    Args:
+        logger: Logger instance to check
+        
+    Returns:
+        Existing RotatingFileHandler or None if not found
+    """
+    for handler in logger.handlers:
+        if isinstance(handler, RotatingFileHandler):
+            return handler
+    return None
 
 
 def add_timestamp(_, __, event_dict: EventDict) -> EventDict:
@@ -78,35 +117,50 @@ def add_thread_info(_: Any, __: Any, event_dict: EventDict) -> EventDict:
     return event_dict
 
 
-def sanitize_keys(_, __, event_dict: EventDict) -> EventDict:
+def sanitize_keys(event_dict: dict, sensitive_keys: set) -> dict:
+    """Sanitize dictionary by redacting sensitive keys, using case-insensitive matching and handling nested structures.
+    
+    Args:
+        event_dict: Dictionary to sanitize
+        sensitive_keys: Set of keys to redact
+        
+    Returns:
+        Sanitized copy of the dictionary
+    """
+    def _sanitize_value(key: str, value: Any) -> Any:
+        if any(sk.lower() == key.lower() for sk in sensitive_keys):
+            return "[REDACTED]"
+        if isinstance(value, dict):
+            return sanitize_keys(value, sensitive_keys)
+        if isinstance(value, list):
+            return [_sanitize_value("", item) for item in value]
+        return value
+        
+    return {k: _sanitize_value(k, v) for k, v in event_dict.items()}
+
+
+def sanitize_event_dict(_, __, event_dict: EventDict) -> EventDict:
     """Sanitize log record keys and values, recursively masking sensitive data."""
     SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential"}
 
-    def _sanitize(obj):
-        if isinstance(obj, dict):
-            sanitized = {}
-            for key, value in obj.items():
-                new_key = key.replace(".", "_").replace("$", "_")
-                if new_key in SENSITIVE_KEYS:
-                    sanitized[new_key] = "***"
-                else:
-                    sanitized[new_key] = _sanitize(value)
-            return sanitized
-        elif isinstance(obj, list):
-            return [_sanitize(item) for item in obj]
-        else:
-            return obj
-
-    return _sanitize(event_dict)
+    # Make a copy to preserve metadata
+    sanitized = event_dict.copy()
+    
+    # Apply sanitization and update the copy
+    sanitized.update(sanitize_keys(event_dict, SENSITIVE_KEYS))
+    return sanitized
 
 
 def rotate_logs(log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5) -> None:
     """Configure log rotation and retention."""
     log_file = log_dir / "perihelion.log"
-    log_handler = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=max_bytes, backupCount=backup_count
-    )
-    logging.getLogger().addHandler(log_handler)
+    
+    # Check if a RotatingFileHandler already exists
+    root_logger = logging.getLogger()
+    if not get_handler(root_logger):
+        # Create secure rotating handler
+        log_handler = create_secure_handler(log_file, max_bytes, backup_count)
+        root_logger.addHandler(log_handler)
 
 
 class StructuredJsonFormatter(logging.Formatter):
@@ -161,7 +215,7 @@ def setup_logging(
 
     # Create log file handler
     log_file = log_dir / "perihelion.log"
-    file_handler = logging.FileHandler(log_file)
+    file_handler = create_secure_handler(log_file, max_log_size, backup_count)
     file_handler.setFormatter(StructuredJsonFormatter())
 
     # Create stderr handler for warnings and above
@@ -193,7 +247,7 @@ def setup_logging(
             add_timestamp,
             add_thread_info,
             add_caller,
-            sanitize_keys,
+            sanitize_event_dict,
             structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ],
@@ -250,7 +304,7 @@ def audit_event(
 
         if details:
             # Sanitize sensitive data
-            event["details"] = sanitize_keys(None, None, details)
+            event["details"] = sanitize_keys(details, {"password", "token", "secret", "key", "credential"})
 
         if error:
             event["error"] = {

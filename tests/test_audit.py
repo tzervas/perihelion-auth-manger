@@ -2,6 +2,7 @@
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 from unittest.mock import patch
 
@@ -30,20 +31,45 @@ def test_logging_directory_permissions(mock_log_dir):
     assert oct(os.stat(mock_path).st_mode).endswith("700")
 
 
-@patch("perihelion_auth_manager.audit.logger.logging.FileHandler")
-def test_log_file_permissions(mock_file_handler):
-    """Test log file permissions are secure."""
-    # Mock log file path
-    mock_path = "/mocked/path/perihelion.log"
-    mock_file_handler.return_value.baseFilename = mock_path
-
-    with open(mock_path, "w") as f:
-        f.write("")  # Create mocked log file
-
-    os.chmod(mock_path, 0o600)
-
+def test_secure_handler_creation(tmp_path):
+    """Test creation of secure RotatingFileHandler."""
+    from perihelion_auth_manager.audit.logger import create_secure_handler
+    
+    log_file = tmp_path / "test.log"
+    max_bytes = 1024
+    backup_count = 2
+    
+    handler = create_secure_handler(log_file, max_bytes, backup_count)
+    
+    # Check log directory permissions
+    assert oct(os.stat(tmp_path).st_mode & 0o777).endswith('750')
+    
     # Check log file permissions
-    assert oct(os.stat(mock_path).st_mode).endswith("600")
+    assert oct(os.stat(log_file).st_mode & 0o777).endswith('640')
+    
+    # Verify handler configuration
+    assert isinstance(handler, RotatingFileHandler)
+    assert handler.maxBytes == max_bytes
+    assert handler.backupCount == backup_count
+
+
+def test_handler_existence_check():
+    """Test detection of existing handlers."""
+    from perihelion_auth_manager.audit.logger import get_handler
+    
+    logger = logging.getLogger('test_logger')
+    
+    # Initially no handler
+    assert get_handler(logger) is None
+    
+    # Add a non-rotating handler
+    logger.addHandler(logging.StreamHandler())
+    assert get_handler(logger) is None
+    
+    # Add a rotating handler
+    rotating_handler = RotatingFileHandler('/tmp/test.log')
+    logger.addHandler(rotating_handler)
+    assert get_handler(logger) == rotating_handler
 
 
 def test_audit_event_logging():
@@ -123,6 +149,38 @@ def test_json_logging(mock_file_handler):
         assert parsed_json["extra_field"] == "extra_value"
         assert "timestamp" in parsed_json
         assert "level" in parsed_json
+
+
+def test_nested_key_sanitization():
+    """Test sanitization of nested sensitive keys in audit events."""
+    data = {
+        "outer": {
+            "password": "secret",
+            "nested": {"api_key": "12345"}
+        }
+    }
+    # Using the audit_event to test sanitization
+    with patch("structlog.BoundLogger.info") as mock_info:
+        audit_event(
+            event_type=EventType.CRED_CREATE,
+            user="test-user",
+            success=True,
+            details=data
+        )
+        logged_data = mock_info.call_args[1]["event"]
+        assert logged_data["details"]["outer"]["password"] == "***"
+        assert logged_data["details"]["outer"]["nested"]["api_key"] == "***"
+
+
+def test_handler_duplication():
+    """Test prevention of duplicate secure handlers."""
+    from perihelion_auth_manager.audit.logger import create_secure_handler
+    
+    logger = logging.getLogger("test")
+    create_secure_handler(get_log_dir() / "test.log", 1024, 3)
+    original_handler_count = len(logger.handlers)
+    create_secure_handler(get_log_dir() / "test.log", 1024, 3)
+    assert len(logger.handlers) == original_handler_count
 
 
 def test_structlog_configuration():
