@@ -170,7 +170,12 @@ def setup_logging(
     )
 
     # Set permissions on log file
-    os.chmod(log_file, 0o600)
+    try:
+        os.chmod(log_file, 0o600)
+    except (AttributeError, NotImplementedError, OSError, PermissionError) as e:
+        # AttributeError/NotImplementedError: os.chmod may not be available on some platforms (e.g., Windows)
+        # OSError/PermissionError: file system may not support chmod or permission denied
+        logging.warning(f"Could not set permissions on log file {log_file}: {e}")
 
     # Configure structlog
     structlog.configure(
