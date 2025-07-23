@@ -2,6 +2,7 @@
 
 import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import platform
 import sys
@@ -191,14 +192,8 @@ def setup_logging(
     # Create logger
     logger = structlog.get_logger()
 
-    # Add correlation ID if provided
-    if correlation_id:
-        logger = logger.bind(correlation_id=correlation_id)
-    if not logger._logger.hasHandlers():
-        logging.getLogger().addHandler(console_handler)
-
-    else:
-        logger = logger.bind(correlation_id=str(uuid.uuid4()))
+    # Add correlation ID
+    logger = logger.bind(correlation_id=correlation_id or str(uuid.uuid4()))
 
     # Set up log rotation
     rotate_logs(log_dir, max_log_size, backup_count)
@@ -258,13 +253,4 @@ def audit_event(
     except Exception as e:
         logger.error("audit_event_logging_failure", error=str(e))
 
-    if error:
-        event["error"] = {
-            "type": type(error).__name__,
-            "message": str(error),
-        }
-
-    if success:
-        logger.info("audit_event", **event)
-    else:
-        logger.error("audit_event", **event)
+    # Error state is already handled in the try block
