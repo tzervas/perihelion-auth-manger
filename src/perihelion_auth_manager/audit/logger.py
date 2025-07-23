@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Union
 
 import structlog
 from structlog.types import EventDict, Processor
+from ..security import ensure_secure_permissions
 
 
 def get_log_dir(base_dir: Union[str, Path, None] = None) -> Path:
@@ -45,10 +46,8 @@ def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> 
     # Create parent directory with secure permissions
     log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
     
-    # Open file with secure permissions from creation
-    fd = os.open(str(log_path), os.O_WRONLY | os.O_CREAT, 
-                 stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
-    os.close(fd)
+    # Create file with secure permissions from the start
+    ensure_secure_permissions(log_path)
     
     return RotatingFileHandler(str(log_path), maxBytes=max_bytes,
                              backupCount=backup_count)
@@ -231,14 +230,6 @@ def setup_logging(
         handlers=[file_handler, console_handler],
     )
 
-    # Set permissions on log file
-    try:
-        os.chmod(log_file, 0o600)
-    except (AttributeError, NotImplementedError, OSError, PermissionError) as e:
-        # AttributeError/NotImplementedError: os.chmod may not be available on some platforms (e.g., Windows)
-        # OSError/PermissionError: file system may not support chmod or permission denied
-        logging.warning(f"Could not set permissions on log file {log_file}: {e}")
-
     # Configure structlog
     structlog.configure(
         processors=[
@@ -268,13 +259,22 @@ def setup_logging(
     return logger
 
 
+_LOGGER_INSTANCE = None
+
 def get_logger() -> structlog.BoundLogger:
     """Get configured logger instance.
+    
+    Returns a cached logger instance to preserve context like correlation_id
+    across calls. If no logger has been configured yet, configures one with
+    default settings.
 
     Returns:
-        Logger instance
+        Cached logger instance with preserved context
     """
-    return structlog.get_logger()
+    global _LOGGER_INSTANCE
+    if _LOGGER_INSTANCE is None:
+        _LOGGER_INSTANCE = setup_logging()
+    return _LOGGER_INSTANCE
 
 
 def audit_event(
