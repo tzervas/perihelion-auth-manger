@@ -43,7 +43,7 @@ def test_log_file_permissions(mock_file_handler):
     os.chmod(mock_path, 0o600)
 
     # Check log file permissions
-    assert oct(os.stat(mock_path).st_mode)[-3:] == "600"
+    assert oct(os.stat(mock_path).st_mode).endswith("600")
 
 
 def test_audit_event_logging():
