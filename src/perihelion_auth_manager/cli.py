@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """Command-line interface for Perihelion Auth-Manager."""
 
 import click
@@ -124,4 +121,3 @@ def update_key_metadata(key_id: str, description: str, labels: Optional[List[str
 
 if __name__ == "__main__":
     cli()
-
