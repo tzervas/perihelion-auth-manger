@@ -1,10 +1,9 @@
 """Command-line interface for Perihelion Auth-Manager."""
 
-# trunk-ignore(ruff/I001)
 import base64
 import os
 import uuid
-from typing import Any
+from typing import Any, Optional
 
 import click
 
@@ -16,26 +15,29 @@ from perihelion_auth_manager.storage import get_platform_store
 @click.group()
 @click.version_option()
 def cli() -> None:
-    """Perihelion Auth-Manager CLI"""
+    """Perihelion Auth-Manager CLI."""
 
 
 @cli.command()
 @click.option("--username", prompt=True, help="Username for credentials.")
 @click.password_option(help="Password for encryption.")
 @click.option("--description", default="", help="Credential description.")
-@click.option("--labels", multiple=True, help="Key-value labels.")
+@click.option("--labels", multiple=True, help="Key-value labels (key=value).")
 def add_credential(
-    username: str, password: str, description: str, labels: list[str] | None = None
+    username: str,
+    password: str,
+    description: str,
+    labels: Optional[list[str]] = None,
 ) -> None:
     """Add a new credential."""
-    # Convert labels to dict
     labels = labels or []
-    label_dict = {k: v for k, v in (label.split("=", 1) for label in labels)}
+    try:
+        label_dict = {k: v for k, v in (label.split("=", 1) for label in labels)}
+    except ValueError:
+        click.echo("Error: Labels must be in key=value format.", err=True)
+        return
 
-    # Generate random credential data
     credential_data = base64.b64encode(os.urandom(32)).decode()
-
-    # Create credential metadata
     metadata = {
         "platform": "example-platform",
         "username": username,
@@ -47,10 +49,12 @@ def add_credential(
     store = get_platform_store()
 
     try:
-        # Store credential
         store.store_credential(credential_data, credential_id, metadata)
         audit_event(
-            EventType.CRED_CREATE, username, success=True, details={"credential_id": str(credential_id)}
+            EventType.CRED_CREATE,
+            username,
+            success=True,
+            details={"credential_id": str(credential_id)},
         )
         click.echo(f"Credential {credential_id} added for {username}.")
     except Exception as e:
@@ -70,9 +74,7 @@ def add_credential(
 def get_key(key_id: str, password: str) -> None:
     """Retrieve a stored key."""
     store = KeyStore()
-
     try:
-        # Retrieve key
         key = store.get_key(uuid.UUID(key_id), password)
         click.echo(f"Key: {base64.b64encode(key).decode()}")
     except Exception as e:
@@ -83,7 +85,9 @@ def get_key(key_id: str, password: str) -> None:
 @cli.command(name="list")
 @click.option("--platform", default=None, help="Filter by platform.")
 @click.option("--username", default=None, help="Filter by username.")
-def list_credentials(platform: str | None = None, username: str | None = None) -> None:
+def list_credentials(
+    platform: Optional[str] = None, username: Optional[str] = None
+) -> None:
     """List stored credentials."""
     store = get_platform_store()
     credentials = store.list_credentials(platform, username)
@@ -104,7 +108,6 @@ def list_credentials(platform: str | None = None, username: str | None = None) -
 def delete_key(key_id: str) -> None:
     """Delete a stored key."""
     store = KeyStore()
-
     try:
         store.delete_key(uuid.UUID(key_id))
         audit_event(EventType.KEY_DELETE, key_id, success=True)
@@ -117,14 +120,20 @@ def delete_key(key_id: str) -> None:
 @cli.command()
 @click.option("--key-id", prompt=True, help="Key ID for metadata update.")
 @click.option("--description", prompt=True, help="New description.")
-@click.option("--labels", multiple=True, help="New key-value labels.")
+@click.option("--labels", multiple=True, help="New key-value labels (key=value).")
 def update_key_metadata(
-    key_id: str, description: str, labels: list[str] | None = None
+    key_id: str,
+    description: str,
+    labels: Optional[list[str]] = None,
 ) -> None:
     """Update key metadata."""
     store = KeyStore()
     labels = labels or []
-    label_dict = {k: v for k, v in (label.split("=", 1) for label in labels)}
+    try:
+        label_dict = {k: v for k, v in (label.split("=", 1) for label in labels)}
+    except ValueError:
+        click.echo("Error: Labels must be in key=value format.", err=True)
+        return
 
     try:
         store.update_metadata(
