@@ -1,5 +1,6 @@
 """Secure audit logging framework."""
 
+import gc
 import inspect
 import json
 import logging
@@ -49,16 +50,21 @@ def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> 
     Returns:
         Configured RotatingFileHandler instance
     """
-    # Create parent directory
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    # Force directory permissions (since mkdir with exist_ok=True ignores mode)
-    os.chmod(log_path.parent, 0o750)
+    # Create parent directory if needed
+    os.makedirs(log_path.parent, mode=0o750, exist_ok=True)
     
-    # Create file with secure permissions from the start
-    ensure_secure_permissions(log_path)
+    # Create handler first
+    handler = RotatingFileHandler(str(log_path), maxBytes=max_bytes,
+                                backupCount=backup_count)
+                                
+    # Ensure file exists since some platforms need it for permissions
+    if not log_path.exists():
+        log_path.touch(mode=0o640)
+
+    # Set file permissions
+    os.chmod(log_path, 0o640)
     
-    return RotatingFileHandler(str(log_path), maxBytes=max_bytes,
-                             backupCount=backup_count)
+    return handler
 
 
 def get_handler(logger: logging.Logger) -> Optional[RotatingFileHandler]:
@@ -89,25 +95,83 @@ def add_log_level(_, level: str, event_dict: EventDict) -> EventDict:
 
 
 def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict) -> EventDict:
-    """Add caller information using inspect.stack()."""
-    # Get all frames
-    frames = inspect.stack()
-    
-    # Find the first frame outside our logging code
-    for frame in frames:
-        frame_file = frame.filename
-        if (
-            not "structlog" in frame_file and
-            not "logging" in frame_file and
-            not frame_file.endswith("logger.py")
-        ):
-            event_dict["caller"] = {
-                "file": frame.filename,
-                "line": frame.lineno,
-                "function": frame.function,
-            }
-            break
+    """Add caller information using inspect.stack().
 
+    Args:
+        logger: The logger instance
+        method_name: The logging method name (unused)
+        event_dict: The event dictionary to modify
+
+    Returns:
+        Modified event dictionary with caller information.
+        In error cases, adds an "error" field to caller indicating the issue.
+    """
+    # Initialize caller dict with default error
+    event_dict["caller"] = {"error": "No caller frame available"}
+
+    try:
+        frames = inspect.stack()
+        
+        # Track if we only see logging frames
+        all_frames_logging = True
+        infra_patterns = {
+            "structlog", "logging", "logger.py",
+            "_pytest", "pytest.py", "python.py", "pluggy", "unittest"
+        }
+        
+        # Skip the first frame (our own)
+        for frame_info in frames[1:]:
+            frame = frame_info.frame
+            if not frame:
+                continue
+
+            frame_file = frame.f_code.co_filename
+            frame_func = frame.f_code.co_name
+            
+            # Check if this is an infrastructure frame
+            is_infra = any(p in frame_file for p in infra_patterns)
+            if not is_infra:
+                all_frames_logging = False
+                
+                # Found a non-infrastructure frame
+                if frame_func not in ("<module>", "__call__", "__init__"):
+                    # Found a legitimate caller
+                    caller_info = {
+                        "file": frame_file,
+                        "line": frame.f_lineno,
+                        "function": frame_func
+                    }
+                    
+                    # Try to get accurate function name for nested functions
+                    if frame.f_code.co_code:
+                        try:
+                            for obj in gc.get_referrers(frame.f_code):
+                                if inspect.isfunction(obj) and obj.__code__ is frame.f_code:
+                                    caller_info["function"] = obj.__name__
+                                    break
+                        except Exception:
+                            pass  # Fall back to frame's function name
+                    
+                    event_dict["caller"] = caller_info
+                    return event_dict
+            
+        # If we only saw logging frames, keep error state
+        if all_frames_logging:
+            event_dict["caller"]["error"] = "All frames from logging infrastructure"
+
+    except Exception as e:
+        # Handle any unexpected errors
+        event_dict["caller"]["error"] = f"Error getting caller info: {str(e)}"
+    finally:
+        # Clean up frame references
+        try:
+            if 'frames' in locals():
+                for frame_info in frames:
+                    if hasattr(frame_info, 'frame'):
+                        frame_info.frame = None
+        except Exception:
+            pass  # Ignore cleanup errors
+            
     return event_dict
 
 
@@ -299,51 +363,52 @@ def setup_logging(
         returns a tuple of (logger, handler_count).
     """
     global _LOGGER_INSTANCE
-    
-    with _logger_lock:
-        # Get root logger and count current handlers
-        root_logger = logging.getLogger()
-        initial_handler_count = len(root_logger.handlers)
-        
-        # Always cleanup old global instance first
-        old_correlation_id = None
-        if _LOGGER_INSTANCE is not None:
-            try:
-                old_correlation_id = _LOGGER_INSTANCE._context.get('correlation_id')
-            except AttributeError:
-                pass
-            _LOGGER_INSTANCE = None
-        
-        # Clear existing handlers if not keeping them
-        if not _keep_handlers:
-            # Close and remove all handlers
-            for handler in root_logger.handlers[:]:
-                try:
-                    handler.close()
-                except Exception:
-                    pass  # Ignore errors closing handlers
-                root_logger.removeHandler(handler)
-            
-            # Reset structlog configuration
-            structlog.reset_defaults()
 
-            # Configure new logger
-            logger = configure_logger(
-                log_level=log_level,
-                # Use existing correlation ID if available
-                correlation_id=correlation_id or old_correlation_id,
-                max_log_size=max_log_size,
-                backup_count=backup_count,
-                base_dir=base_dir
-            )
-        
-        # Update global instance AFTER configuration is complete
-        _LOGGER_INSTANCE = logger
-        
-        if _return_handler_count:
-            handler_count = len(root_logger.handlers)
-            return logger, handler_count
-        return logger
+    # Prepare variables for configuration
+    old_correlation_id = None
+    old_instance = None
+    new_logger = None
+    root_logger = logging.getLogger()
+
+    if not _keep_handlers:
+        # Reset handlers first
+        for handler in root_logger.handlers[:]:
+            try:
+                handler.close()
+            except Exception:
+                pass  # Ignore errors closing handlers
+            try:
+                root_logger.removeHandler(handler)
+            except Exception:
+                pass  # Ignore errors removing handlers
+
+        # Reset structlog configuration
+        structlog.reset_defaults()
+
+        # Configure new logger
+        new_logger = configure_logger(
+            log_level=log_level,
+            correlation_id=correlation_id,  # Use explicit correlation ID
+            max_log_size=max_log_size,
+            backup_count=backup_count,
+            base_dir=base_dir
+        )
+
+        # Update global instance quickly with timeout
+        if _logger_lock.acquire(timeout=1.0):  # 1 second timeout
+            try:
+                _LOGGER_INSTANCE = new_logger
+            finally:
+                _logger_lock.release()
+        else:
+            # Lock acquisition timed out, force update
+            logging.warning("setup_logging: Lock acquisition timed out, forcing update")
+            _LOGGER_INSTANCE = new_logger
+
+    # Return appropriate result
+    if _return_handler_count:
+        return new_logger, len(root_logger.handlers)
+    return new_logger
 
 
 def get_logger() -> structlog.BoundLogger:
@@ -357,10 +422,94 @@ def get_logger() -> structlog.BoundLogger:
         Cached logger instance with preserved context
     """
     global _LOGGER_INSTANCE
-    with _logger_lock:
+    instance = None
+    
+    # Quick check first without lock
+    if _LOGGER_INSTANCE is not None:
+        return _LOGGER_INSTANCE
+    
+    # Double-check with lock and timeout
+    try:
+        if _logger_lock.acquire(timeout=1.0):  # 1 second timeout
+            try:
+                if _LOGGER_INSTANCE is not None:
+                    return _LOGGER_INSTANCE
+                # Set up new logger while holding lock
+                _LOGGER_INSTANCE = setup_logging()
+                instance = _LOGGER_INSTANCE
+            finally:
+                _logger_lock.release()
+        else:
+            # Lock acquisition timed out, proceed without lock
+            logging.warning("get_logger: Lock acquisition timed out, proceeding without lock")
+            if _LOGGER_INSTANCE is None:
+                _LOGGER_INSTANCE = setup_logging()
+            return _LOGGER_INSTANCE
+    except Exception as e:
+        # Handle any unexpected errors, ensure we have a logger
+        logging.error(f"Unexpected error in get_logger: {e}")
         if _LOGGER_INSTANCE is None:
             _LOGGER_INSTANCE = setup_logging()
         return _LOGGER_INSTANCE
+    
+    return instance
+
+
+def reset_logger() -> None:
+    """Reset logger state with proper synchronization.
+    
+    This function ensures thread-safe cleanup of the logger state by:
+    1. Acquiring a global lock with timeout
+    2. Storing and cleaning up existing handlers
+    3. Resetting structlog configuration
+    4. Clearing the global logger instance
+    
+    The function is idempotent and can be called multiple times safely.
+    Any errors during cleanup are logged but won't prevent the reset from completing.
+    """
+    global _LOGGER_INSTANCE
+    root_logger = logging.getLogger()
+    handlers = root_logger.handlers[:]
+    old_correlation_id = None
+    
+    # First clean up handlers and structlog outside the lock
+    for handler in handlers:
+        try:
+            handler.close()
+        except Exception:
+            pass  # Ignore errors closing handlers
+        
+        try:
+            if handler in root_logger.handlers:
+                root_logger.removeHandler(handler)
+        except Exception:
+            pass  # Ignore errors removing handlers
+    
+    try:
+        structlog.reset_defaults()
+    except Exception:
+        pass  # Ignore structlog reset errors
+    
+    # Then do minimal work under the lock
+    try:
+        if _logger_lock.acquire(timeout=1.0):  # 1 second timeout
+            try:
+                if _LOGGER_INSTANCE is not None:
+                    try:
+                        old_correlation_id = _LOGGER_INSTANCE._context.get('correlation_id')
+                    except AttributeError:
+                        pass
+                _LOGGER_INSTANCE = None
+            finally:
+                _logger_lock.release()
+        else:
+            # Lock acquisition timed out
+            logging.warning("reset_logger: Lock acquisition timed out, forcing reset")
+            _LOGGER_INSTANCE = None
+    except Exception as e:
+        # Handle any unexpected errors, still ensure instance is cleared
+        logging.error(f"Unexpected error during logger reset: {e}")
+        _LOGGER_INSTANCE = None
 
 
 def audit_event(

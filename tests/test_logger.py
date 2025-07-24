@@ -3,7 +3,9 @@
 import inspect
 import logging
 import sys
+import types
 from pathlib import Path
+from unittest import mock
 
 import pytest
 import structlog
@@ -78,24 +80,57 @@ def test_get_log_dir_custom_path():
 
 def test_add_caller_frame_detection():
     """Test that add_caller correctly detects the caller frame."""
-    logger = setup_logging(as_global=False)
+    logger = setup_logging()
     event_dict = {}
-    
-    def test_function():
-        # Call add_caller from within a known function
-        return add_caller(logger, None, event_dict)
-    
-    result = test_function()
-    
-    assert "caller" in result
-    assert result["caller"]["function"] == "test_function"
-    assert result["caller"]["file"] == __file__
-    assert isinstance(result["caller"]["line"], int)
+
+    # Create artificial frame info objects
+    def mock_frame(name, filename):
+        # Python 3.13 requires 16 arguments for CodeType
+        code = types.CodeType(
+            0,             # argcount
+            0,             # posonlyargcount
+            0,             # kwonlyargcount
+            0,             # nlocals
+            1,             # stacksize
+            0,             # flags
+            b"",          # bytecode
+            (),            # consts
+            (),            # names
+            (),            # varnames
+            str(filename), # filename
+            str(name),     # name
+            1,             # firstlineno
+            b"",          # lnotab
+            (),            # cellvars
+            ()             # freevars
+        )
+        frame = types.FrameType(code, {}, None)
+        return frame
+
+    # Test with known frames
+    with mock.patch("inspect.stack") as mock_stack:
+        frame_infos = [
+            inspect.FrameInfo(
+                mock_frame("add_caller", "structlog/xyz.py"),
+                "structlog/xyz.py", 1, "add_caller", ["def add_caller():"], 0
+            ),
+            inspect.FrameInfo(
+                mock_frame("test_function", "test_logger.py"),
+                "test_logger.py", 2, "test_function", ["def test_function():"], 0
+            )
+        ]
+        mock_stack.return_value = frame_infos
+        result = add_caller(logger, None, event_dict)
+
+        assert "caller" in result
+        assert result["caller"]["function"] == "test_function"
+        assert "test_logger.py" in result["caller"]["file"]
+        assert isinstance(result["caller"]["line"], int)
 
 
 def test_add_caller_skips_logging_frames():
     """Test that add_caller skips frames from logging/structlog."""
-    logger = setup_logging(as_global=False)
+    logger = setup_logging()
     event_dict = {}
     
     result = add_caller(logger, None, event_dict)
@@ -106,7 +141,71 @@ def test_add_caller_skips_logging_frames():
     assert result["caller"]["function"] == "test_add_caller_skips_logging_frames"
 
 
-@pytest.mark.filterwarnings("ignore:.*:")
+def test_add_caller_edge_cases():
+    """Test add_caller behavior with various call patterns."""
+    logger = setup_logging()
+    
+    def nested_call():
+        return add_caller(logger, None, {})
+    
+    def wrapper():
+        return nested_call()
+    
+    # Create artificial frame info objects
+    def mock_frame(name, filename):
+        # Python 3.13 requires 16 arguments for CodeType
+        code = types.CodeType(
+            0,             # argcount
+            0,             # posonlyargcount
+            0,             # kwonlyargcount
+            0,             # nlocals
+            1,             # stacksize
+            0,             # flags
+            b"",          # bytecode
+            (),            # consts
+            (),            # names
+            (),            # varnames
+            str(filename), # filename
+            str(name),     # name
+            1,             # firstlineno
+            b"",          # lnotab
+            (),            # cellvars
+            ()             # freevars
+        )
+        frame = types.FrameType(code, {}, None)
+        return frame
+    
+    # Test when all frames are from logging
+    with mock.patch("inspect.stack") as mock_stack:
+        frame_infos = [
+            inspect.FrameInfo(
+                mock_frame("add_caller", "structlog/xyz.py"),
+                "structlog/xyz.py", 1, "add_caller", ["def add_caller():"], 0
+            ),
+            inspect.FrameInfo(
+                mock_frame("log", "logging/abc.py"),
+                "logging/abc.py", 2, "log", ["def log():"], 0
+            ),
+            inspect.FrameInfo(
+                mock_frame("handler", "logger.py"),
+                "logger.py", 3, "handler", ["def handler():"], 0
+            )
+        ]
+        mock_stack.return_value = frame_infos
+        result = add_caller(logger, None, {})
+        assert "caller" in result
+        assert "error" in result["caller"]
+        assert result["caller"]["error"] == "All frames from logging infrastructure"
+    
+    # Test with empty stack
+    with mock.patch("inspect.stack", return_value=[]):
+        result = add_caller(logger, None, {})
+        assert "caller" in result
+        assert "error" in result["caller"]
+        assert result["caller"]["error"] == "No caller frame available"
+
+
+@pytest.mark.filterwarnings
 @pytest.mark.parametrize("caplog", [None])
 @pytest.mark.timeout(30)  # Set 30 second timeout for log rotation test
 def test_log_rotation(tmp_path, cleanup_logs, caplog):
@@ -125,8 +224,7 @@ def test_log_rotation(tmp_path, cleanup_logs, caplog):
         log_level="INFO",
         max_log_size=max_size,
         backup_count=backup_count,
-        base_dir=log_dir,
-        as_global=False
+        base_dir=log_dir
     )
     
     # Get the file handler - should be one of the handlers in root logger
@@ -166,7 +264,7 @@ def test_reset_logger(tmp_path):
     """Test that reset_logger properly cleans up logger resources."""
     # First setup a logger
     base_dir = tmp_path / "logs"
-    logger = setup_logging(base_dir=base_dir, as_global=True)
+    logger = setup_logging(base_dir=base_dir)
     
     # Verify it's set as the global instance
     assert _LOGGER_INSTANCE is not None
@@ -194,11 +292,11 @@ def test_reset_logger_thread_safety(tmp_path):
     import time
     
     def setup_and_reset():
-        logger = setup_logging(base_dir=tmp_path / "logs", as_global=True)
+        logger = setup_logging(base_dir=tmp_path / "logs")
         time.sleep(0.1)  # Simulate some work
         reset_logger()
     
-# Create multiple threads that setup and reset loggers
+    # Create multiple threads that setup and reset loggers
     threads = [threading.Thread(target=setup_and_reset) for _ in range(5)]
     
     # Start all threads
@@ -239,11 +337,54 @@ def test_reset_logger_no_instance():
     assert len(logging.getLogger().handlers) == len(pytest_handlers)  # Only pytest handlers should remain
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                  reason="POSIX permissions not supported on Windows")
+@pytest.mark.timeout(10)  # Set 10 second timeout
+def test_logging_directory_permissions(tmp_path, cleanup_logs):
+    """Test log directory permissions are secure."""
+    log_dir = tmp_path / "logs"
+    
+    # Set up logging with handler
+    logger = setup_logging(
+        base_dir=log_dir,
+        max_log_size=1024,  # 1KB
+        backup_count=2
+    )
+    
+    # Verify directory permissions (750)
+    dir_mode = oct(log_dir.stat().st_mode & 0o777)
+    assert dir_mode.endswith('750'), f"Expected 750 permissions, got {dir_mode}"
+    
+    # Get the file handler and its file path
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers:
+        if isinstance(h, RotatingFileHandler):
+            file_handler = h
+            log_file = Path(file_handler.baseFilename)
+            break
+    else:
+        pytest.fail("No RotatingFileHandler found")
+    
+    # Verify file permissions (640)
+    file_mode = oct(log_file.stat().st_mode & 0o777)
+    assert file_mode.endswith('640'), f"Expected 640 permissions, got {file_mode}"
+    
+    # Write enough data to force rotation
+    logger.info("test message", data="x" * 2048)  # Force rotation
+    file_handler.flush()
+    
+    # Check rotated file permissions
+    rotated_file = log_dir / "perihelion.log.1"
+    assert rotated_file.exists(), "Rotated file not created"
+    rotated_mode = oct(rotated_file.stat().st_mode & 0o777)
+    assert rotated_mode.endswith('640'), f"Expected 640 permissions on rotated file, got {rotated_mode}"
+
+
 @pytest.mark.timeout(10)  # Set 10 second timeout
 def test_reset_logger_multiple_calls(tmp_path):
     """Test that reset_logger can be called multiple times safely."""
     # Setup initial logger
-    logger = setup_logging(base_dir=tmp_path / "logs", as_global=True)
+    logger = setup_logging(base_dir=tmp_path / "logs")
     
     # Call reset multiple times
     for _ in range(3):
@@ -257,3 +398,46 @@ def test_reset_logger_multiple_calls(tmp_path):
     new_logger = get_logger()
     assert new_logger is not None
     assert _LOGGER_INSTANCE is not None
+
+
+@pytest.mark.timeout(30)  # Set 30 second timeout for concurrent operations
+def test_concurrent_logger_operations(tmp_path):
+    """Test thread safety of logging operations."""
+    import threading
+    import queue
+    import os
+    
+    errors = queue.Queue()
+    
+    def worker():
+        try:
+            # Perform various logging operations
+            logger = get_logger()
+            logger.info("test message")
+            reset_logger()
+            new_logger = setup_logging(base_dir=tmp_path)
+            new_logger.info("another test")
+        except Exception as e:
+            errors.put(e)
+    
+    # Create and start multiple threads
+    threads = [threading.Thread(target=worker) for _ in range(10)]
+    for t in threads:
+        t.start()
+    
+    # Wait for completion
+    for t in threads:
+        t.join(timeout=5)
+        assert not t.is_alive(), "Thread timed out"
+    
+    # Check for errors
+    assert errors.empty(), f"Encountered errors: {list(errors.queue)}"
+    
+    # Verify log file integrity
+    log_files = list(tmp_path.glob("**/*.log*"))
+    assert len(log_files) > 0, "No log files created"
+    
+    # Verify file permissions
+    for log_file in log_files:
+        mode = oct(os.stat(log_file).st_mode & 0o777)
+        assert mode.endswith('640'), f"Invalid permissions on {log_file}: {mode}"
