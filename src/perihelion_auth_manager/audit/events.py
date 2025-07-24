@@ -1,6 +1,6 @@
 """Audit event type definitions."""
 
-from enum import Enum, auto
+from enum import Enum
 
 
 class EventType(str, Enum):

@@ -82,15 +82,30 @@ def get_handler(logger: logging.Logger) -> RotatingFileHandler | None:
     return None
 
 
-def add_timestamp(_: structlog.BoundLogger, __: str, event_dict: EventDict) -> EventDict:
+def add_timestamp(
+    _: structlog.BoundLogger, __: str, event_dict: EventDict
+) -> EventDict:
     """Add ISO 8601 timestamp."""
     event_dict["timestamp"] = datetime.now(UTC).isoformat()
     return event_dict
 
 
-def add_log_level(_: structlog.BoundLogger, level: str, event_dict: EventDict) -> EventDict:
-    """Add log level."""
-    event_dict["level"] = level
+def add_log_level(
+    _: structlog.BoundLogger,
+    level_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Add log level name to event dictionary.
+
+    Args:
+        _: The bound logger instance (unused)
+        level_name: The name of the log level
+        event_dict: The event dictionary to modify
+
+    Returns:
+        Modified event dictionary with log level added
+    """
+    event_dict["level"] = level_name
     return event_dict
 
 
@@ -109,10 +124,10 @@ def add_caller(
         In error cases, adds an "error" field to caller indicating the issue.
     """
     # Make a type-safe copy of the event dict
-    result: EventDict = {k: v for k, v in event_dict.items()}
+    result: EventDict = dict(event_dict)
     # Add caller info to result
     result["caller"] = {"error": "No caller frame available"}
-    
+
     try:
         frames = inspect.stack()
         if not frames:
@@ -139,7 +154,7 @@ def add_caller(
         for frame_info in frames[1:]:
             # Get the frame and validate it
             frame = frame_info.frame
-            if not frame or not hasattr(frame, 'f_code') or not frame.f_code:
+            if not frame or not hasattr(frame, "f_code") or not frame.f_code:
                 continue
 
             # Extract frame information
@@ -163,30 +178,30 @@ def add_caller(
                 if frame.f_code.co_code:
                     try:
                         for obj in gc.get_referrers(frame.f_code):
-                            if (
-                                inspect.isfunction(obj) 
-                                and obj.__code__ is frame.f_code
-                            ):
+                            if inspect.isfunction(obj) and obj.__code__ is frame.f_code:
                                 caller_info["function"] = obj.__name__
                                 found_valid_caller = True
                                 break
                         if found_valid_caller:
                             result["caller"] = caller_info
                             break
-                    except Exception as e:
+                    except (AttributeError, RuntimeError) as e:
                         logging.debug(f"Error retrieving function name: {e}")
 
         if not found_valid_caller and all_frames_logging:
             result["caller"]["error"] = "All frames from logging infrastructure"
 
-    except Exception as e:
+    except (AttributeError, RuntimeError, ValueError) as e:
         result["caller"]["error"] = f"Error getting caller info: {e}"
 
     return result
 
-def add_thread_info(_: structlog.BoundLogger, __: str, event_dict: EventDict) -> EventDict:
+
+def add_thread_info(
+    _: structlog.BoundLogger, __: str, event_dict: EventDict
+) -> EventDict:
     """Add thread information."""
-    result: EventDict = {k: v for k, v in event_dict.items()}
+    result: EventDict = dict(event_dict)
     thread = threading.current_thread()
     result["thread"] = {
         "id": thread.ident,
@@ -195,14 +210,16 @@ def add_thread_info(_: structlog.BoundLogger, __: str, event_dict: EventDict) ->
     return result
 
 
-def sanitize_keys(event_dict: dict[str, Any], sensitive_keys: set[str]) -> dict[str, Any]:
+def sanitize_keys(
+    event_dict: dict[str, Any], sensitive_keys: set[str]
+) -> dict[str, Any]:
     """Sanitize dictionary by redacting sensitive keys, \
    using case-insensitive matching and handling nested structures.
-    
+
     Args:
         event_dict: Dictionary to sanitize
         sensitive_keys: Set of keys to redact
-        
+
     Returns:
         Sanitized copy of the dictionary
     """
@@ -219,11 +236,13 @@ def sanitize_keys(event_dict: dict[str, Any], sensitive_keys: set[str]) -> dict[
     return {k: _sanitize_value(k, v) for k, v in event_dict.items()}
 
 
-def sanitize_event_dict(_: structlog.BoundLogger, __: str, event_dict: EventDict) -> dict[str, Any]:
+def sanitize_event_dict(
+    _: structlog.BoundLogger, __: str, event_dict: EventDict
+) -> dict[str, Any]:
     """Sanitize log record keys and values, recursively masking sensitive data."""
-    SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential", "api_key"}
+    private_keys = {"password", "token", "secret", "key", "credential", "api_key"}
     # Create a new dict with sanitized values
-    return sanitize_keys(dict(event_dict), SENSITIVE_KEYS)
+    return sanitize_keys(dict(event_dict), private_keys)
 
 
 def rotate_logs(
@@ -241,13 +260,23 @@ def rotate_logs(
 
 
 class StructuredJsonFormatter(logging.Formatter):
-    """JSON formatter for structured logs."""
+    """JSON formatter for structured logs.
+    
+    Formats log records as JSON strings with consistent structure and typing.
+    """
 
-def format(self: 'StructuredJsonFormatter', record: logging.LogRecord) -> str:
-        """Format log record as JSON."""
+    def format(self, record: logging.LogRecord) -> str:
+        """Format a log record as a JSON string.
+
+        Args:
+            record: The log record to format
+
+        Returns:
+            JSON string representation of the log record
+        """
         # Type hint for event_dict attribute
-        if not hasattr(record, 'event_dict'):
-            setattr(record, 'event_dict', {})
+        if not hasattr(record, "event_dict"):
+            record.event_dict = {}
 
         # Get basic record attributes
         log_data: dict[str, Any] = {
@@ -339,19 +368,23 @@ def configure_logger(
 
     # Create logger and ensure it's the right type
     logger = structlog.get_logger()
-    result: structlog.BoundLogger = logger.bind(correlation_id=correlation_id or str(uuid.uuid4()))
-    assert isinstance(result, structlog.BoundLogger)
+    result: structlog.BoundLogger = logger.bind(
+        correlation_id=correlation_id or str(uuid.uuid4())
+    )
+    if not isinstance(result, structlog.BoundLogger):
+        raise TypeError("Expected BoundLogger instance")
     return result
 
 
 def setup_logging(
+    *,
     log_level: str = "INFO",
     correlation_id: str | None = None,
     max_log_size: int = 50 * 1024 * 1024,  # 50 MB
     backup_count: int = 5,
     base_dir: str | Path | None = None,
-    _keep_handlers: bool = False,
-    _return_handler_count: bool = False,
+    keep_handlers: bool = False,
+    return_handler_count: bool = False,
 ) -> structlog.BoundLogger:
     """Setup structured logging.
 
@@ -373,12 +406,10 @@ def setup_logging(
     global _LOGGER_INSTANCE
 
     # Prepare variables for configuration
-    old_correlation_id = None
-    old_instance = None
     new_logger = None
     root_logger = logging.getLogger()
 
-    if not _keep_handlers:
+    if not keep_handlers:
         # Reset handlers first
         for handler in root_logger.handlers[:]:
             with suppress(Exception):
@@ -420,8 +451,9 @@ def setup_logging(
             backup_count=backup_count,
             base_dir=base_dir,
         )
-    
-    assert isinstance(new_logger, structlog.BoundLogger)
+
+    if not isinstance(new_logger, structlog.BoundLogger):
+        raise TypeError("Expected BoundLogger instance")
     return new_logger
 
 
@@ -440,7 +472,8 @@ def get_logger() -> structlog.BoundLogger:
 
     # Quick check first without lock
     if _LOGGER_INSTANCE is not None:
-        assert isinstance(_LOGGER_INSTANCE, structlog.BoundLogger)
+        if not isinstance(_LOGGER_INSTANCE, structlog.BoundLogger):
+            raise TypeError("Expected BoundLogger instance")
         return _LOGGER_INSTANCE
 
     # Double-check with lock and timeout
@@ -453,17 +486,20 @@ def get_logger() -> structlog.BoundLogger:
                 result = _LOGGER_INSTANCE
             finally:
                 _logger_lock.release()
-            
-            assert isinstance(result, structlog.BoundLogger)
+
+            if not isinstance(result, structlog.BoundLogger):
+                raise TypeError("Expected BoundLogger instance")
             return result
 
         # Lock acquisition failed, use configured_logger
-        assert isinstance(configured_logger, structlog.BoundLogger)
+        if not isinstance(configured_logger, structlog.BoundLogger):
+            raise TypeError("Expected BoundLogger instance")
         return configured_logger
 
-    except Exception as e:
+    except (RuntimeError, TimeoutError) as e:
         logging.error(f"Unexpected error in get_logger: {e}")
-        assert isinstance(configured_logger, structlog.BoundLogger)
+        if not isinstance(configured_logger, structlog.BoundLogger):
+            raise TypeError("Expected BoundLogger instance") from None
         return configured_logger
 
 
@@ -482,7 +518,6 @@ def reset_logger() -> None:
     global _LOGGER_INSTANCE
     root_logger = logging.getLogger()
     handlers = root_logger.handlers[:]
-    old_correlation_id = None
 
     # First clean up handlers and structlog outside the lock
     for handler in handlers:
@@ -502,9 +537,7 @@ def reset_logger() -> None:
             try:
                 if _LOGGER_INSTANCE is not None:
                     try:
-                        old_correlation_id = _LOGGER_INSTANCE._context.get(
-                            "correlation_id"
-                        )
+                        _LOGGER_INSTANCE._context.get("correlation_id")
                     except AttributeError as e:
                         logging.debug(f"Failed to retrieve correlation_id: {e}")
                 _LOGGER_INSTANCE = None
@@ -514,13 +547,14 @@ def reset_logger() -> None:
             # Lock acquisition timed out
             logging.warning("reset_logger: Lock acquisition timed out, forcing reset")
             _LOGGER_INSTANCE = None
-    except Exception as e:
+    except (RuntimeError, TimeoutError, ValueError) as e:
         # Handle any unexpected errors, still ensure instance is cleared
         logging.error(f"Unexpected error during logger reset: {e}")
         _LOGGER_INSTANCE = None
 
 
 def audit_event(
+    *,
     event_type: str,
     user: str,
     success: bool,
@@ -557,7 +591,8 @@ def audit_event(
             if details:
                 # Sanitize sensitive data
                 event["details"] = sanitize_keys(
-                    details, {"password", "token", "secret", "key", "credential", "api_key"}
+                    details,
+                    {"password", "token", "secret", "key", "credential", "api_key"},
                 )
 
             if error:
@@ -574,7 +609,7 @@ def audit_event(
             else:
                 logger.error("audit_event")
 
-        except Exception as e:
+        except (AttributeError, KeyError, ValueError) as e:
             logger.error("audit_event_logging_failure", error=str(e))
     else:
         logger.error("audit_event_frame_error", message="Failed to get caller frame")
