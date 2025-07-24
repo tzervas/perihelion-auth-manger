@@ -1,5 +1,6 @@
 """Secure audit logging framework."""
 
+import inspect
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -16,6 +17,11 @@ from typing import Any, Dict, Optional, Union
 import structlog
 from structlog.types import EventDict, Processor
 from ..security import ensure_secure_permissions
+
+
+# Global instances
+_LOGGER_INSTANCE = None
+_logger_lock = threading.Lock()
 
 
 def get_log_dir(base_dir: Union[str, Path, None] = None) -> Path:
@@ -43,8 +49,10 @@ def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> 
     Returns:
         Configured RotatingFileHandler instance
     """
-    # Create parent directory with secure permissions
-    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+    # Create parent directory
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Force directory permissions (since mkdir with exist_ok=True ignores mode)
+    os.chmod(log_path.parent, 0o750)
     
     # Create file with secure permissions from the start
     ensure_secure_permissions(log_path)
@@ -80,29 +88,26 @@ def add_log_level(_, level: str, event_dict: EventDict) -> EventDict:
     return event_dict
 
 
-def add_caller(logger: structlog.BoundLogger, _, event_dict: EventDict) -> EventDict:
-    """Add caller information."""
-    frame = sys._getframe()
-    while frame:
-        frame_info = (
-            frame.f_code.co_filename,
-            frame.f_lineno,
-            frame.f_code.co_name,
-        )
-        if all(
-            p not in frame_info[0] for p in ("structlog", "logging", __file__)
+def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict) -> EventDict:
+    """Add caller information using inspect.stack()."""
+    # Get all frames
+    frames = inspect.stack()
+    
+    # Find the first frame outside our logging code
+    for frame in frames:
+        frame_file = frame.filename
+        if (
+            not "structlog" in frame_file and
+            not "logging" in frame_file and
+            not frame_file.endswith("logger.py")
         ):
-            event_dict.update(
-                {
-                    "caller": {
-                        "file": frame_info[0],
-                        "line": frame_info[1],
-                        "function": frame_info[2],
-                    }
-                }
-            )
+            event_dict["caller"] = {
+                "file": frame.filename,
+                "line": frame.lineno,
+                "function": frame.function,
+            }
             break
-        frame = frame.f_back
+
     return event_dict
 
 
@@ -128,7 +133,7 @@ def sanitize_keys(event_dict: dict, sensitive_keys: set) -> dict:
     """
     def _sanitize_value(key: str, value: Any) -> Any:
         if any(sk.lower() == key.lower() for sk in sensitive_keys):
-            return "[REDACTED]"
+            return "***"
         if isinstance(value, dict):
             return sanitize_keys(value, sensitive_keys)
         if isinstance(value, list):
@@ -140,7 +145,7 @@ def sanitize_keys(event_dict: dict, sensitive_keys: set) -> dict:
 
 def sanitize_event_dict(_, __, event_dict: EventDict) -> EventDict:
     """Sanitize log record keys and values, recursively masking sensitive data."""
-    SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential"}
+    SENSITIVE_KEYS = {"password", "token", "secret", "key", "credential", "api_key"}
 
     # Make a copy to preserve metadata
     sanitized = event_dict.copy()
@@ -192,45 +197,29 @@ class StructuredJsonFormatter(logging.Formatter):
         return json.dumps(data)
 
 
-def setup_logging(
+def configure_logger(
     log_level: str = "INFO",
     correlation_id: Optional[str] = None,
     max_log_size: int = 50 * 1024 * 1024,  # 50 MB
     backup_count: int = 5,
+    base_dir: Optional[Union[str, Path]] = None,
 ) -> structlog.BoundLogger:
-    """Setup structured logging.
+    """Configure and return a new logger instance.
+
+    This is a low-level function that creates a new logger configuration.
+    For normal usage, prefer setup_logging() which properly handles the global instance.
 
     Args:
         log_level: Log level (default: INFO)
         correlation_id: Optional correlation ID for request tracing
         max_log_size: Maximum size of a log file before rotation
         backup_count: Number of backup files to keep
+        base_dir: Optional base directory for log files
 
     Returns:
-        Configured logger instance
+        A new configured logger instance
     """
-    # Get log directory
-    log_dir = get_log_dir()
-
-    # Create log file handler
-    log_file = log_dir / "perihelion.log"
-    file_handler = create_secure_handler(log_file, max_log_size, backup_count)
-    file_handler.setFormatter(StructuredJsonFormatter())
-
-    # Create stderr handler for warnings and above
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.WARNING)
-    console_handler.setFormatter(
-        logging.Formatter("%(levelname)s: %(message)s")
-    )
-
-    # Configure logging
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        handlers=[file_handler, console_handler],
-    )
-
-    # Configure structlog
+    # Configure structlog first
     structlog.configure(
         processors=[
             structlog.stdlib.add_log_level,
@@ -247,19 +236,115 @@ def setup_logging(
         cache_logger_on_first_use=True,
     )
 
+    # Get log directory
+    log_dir = get_log_dir(base_dir)
+
+    # Create log file handler
+    log_file = log_dir / "perihelion.log"
+    file_handler = create_secure_handler(log_file, max_log_size, backup_count)
+    file_handler.setFormatter(StructuredJsonFormatter())
+
+    # Create stderr handler for warnings and above
+    console_handler = logging.StreamHandler(sys.stderr)
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(
+        logging.Formatter("%(levelname)s: %(message)s")
+    )
+
+    # Configure logging
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
+    
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        handler.close()
+        root_logger.removeHandler(handler)
+
+    # Add our handlers
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
     # Create logger
     logger = structlog.get_logger()
 
     # Add correlation ID
     logger = logger.bind(correlation_id=correlation_id or str(uuid.uuid4()))
 
-    # Set up log rotation
-    rotate_logs(log_dir, max_log_size, backup_count)
-
     return logger
 
 
-_LOGGER_INSTANCE = None
+
+def setup_logging(
+    log_level: str = "INFO",
+    correlation_id: Optional[str] = None,
+    max_log_size: int = 50 * 1024 * 1024,  # 50 MB
+    backup_count: int = 5,
+    base_dir: Optional[Union[str, Path]] = None,
+    _keep_handlers: bool = False,
+    _return_handler_count: bool = False,
+) -> Union[structlog.BoundLogger, tuple[structlog.BoundLogger, int]]:
+    """Setup structured logging.
+
+    Args:
+        log_level: Log level (default: INFO)
+        correlation_id: Optional correlation ID for request tracing
+        max_log_size: Maximum size of a log file before rotation
+        backup_count: Number of backup files to keep
+        base_dir: Optional base directory for log files
+        _keep_handlers: Internal flag to control whether existing handlers are preserved
+        _return_handler_count: Internal flag to control return type (logger vs logger+count)
+
+    Returns:
+        By default, returns the configured logger instance. If _return_handler_count is True,
+        returns a tuple of (logger, handler_count).
+    """
+    global _LOGGER_INSTANCE
+    
+    with _logger_lock:
+        # Get root logger and count current handlers
+        root_logger = logging.getLogger()
+        initial_handler_count = len(root_logger.handlers)
+        
+        # Always cleanup old global instance first
+        old_correlation_id = None
+        if _LOGGER_INSTANCE is not None:
+            try:
+                old_correlation_id = _LOGGER_INSTANCE._context.get('correlation_id')
+            except AttributeError:
+                pass
+            _LOGGER_INSTANCE = None
+        
+        # Clear existing handlers if not keeping them
+        if not _keep_handlers:
+            # Close and remove all handlers
+            for handler in root_logger.handlers[:]:
+                try:
+                    handler.close()
+                except Exception:
+                    pass  # Ignore errors closing handlers
+                root_logger.removeHandler(handler)
+            
+            # Reset structlog configuration
+            structlog.reset_defaults()
+
+            # Configure new logger
+            logger = configure_logger(
+                log_level=log_level,
+                # Use existing correlation ID if available
+                correlation_id=correlation_id or old_correlation_id,
+                max_log_size=max_log_size,
+                backup_count=backup_count,
+                base_dir=base_dir
+            )
+        
+        # Update global instance AFTER configuration is complete
+        _LOGGER_INSTANCE = logger
+        
+        if _return_handler_count:
+            handler_count = len(root_logger.handlers)
+            return logger, handler_count
+        return logger
+
 
 def get_logger() -> structlog.BoundLogger:
     """Get configured logger instance.
@@ -272,9 +357,10 @@ def get_logger() -> structlog.BoundLogger:
         Cached logger instance with preserved context
     """
     global _LOGGER_INSTANCE
-    if _LOGGER_INSTANCE is None:
-        _LOGGER_INSTANCE = setup_logging()
-    return _LOGGER_INSTANCE
+    with _logger_lock:
+        if _LOGGER_INSTANCE is None:
+            _LOGGER_INSTANCE = setup_logging()
+        return _LOGGER_INSTANCE
 
 
 def audit_event(
@@ -296,15 +382,24 @@ def audit_event(
     logger = get_logger()
 
     try:
+        # Get caller information
+        frame = inspect.currentframe().f_back
+        caller_info = {
+            "file": frame.f_code.co_filename,
+            "line": frame.f_lineno,
+            "function": frame.f_code.co_name,
+        }
+
         event = {
             "event_type": event_type,
             "user": user,
             "success": success,
+            "caller": caller_info,
         }
 
         if details:
             # Sanitize sensitive data
-            event["details"] = sanitize_keys(details, {"password", "token", "secret", "key", "credential"})
+            event["details"] = sanitize_keys(details, {"password", "token", "secret", "key", "credential", "api_key"})
 
         if error:
             event["error"] = {
@@ -312,10 +407,13 @@ def audit_event(
                 "message": str(error),
             }
 
+        logger = logger.bind(**event)
+
+        # Execute info or error based on success
         if success:
-            logger.info("audit_event", **event)
+            logger.info("audit_event")
         else:
-            logger.error("audit_event", **event)
+            logger.error("audit_event")
 
     except Exception as e:
         logger.error("audit_event_logging_failure", error=str(e))
