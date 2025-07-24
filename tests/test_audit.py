@@ -229,7 +229,7 @@ def test_nested_key_sanitization(logger: structlog.BoundLogger) -> None:
 
 def test_handler_duplication(logger: structlog.BoundLogger) -> None:
     """Test prevention of duplicate secure handlers.
-    
+
     Args:
         logger: The test logger fixture
     """
@@ -237,9 +237,13 @@ def test_handler_duplication(logger: structlog.BoundLogger) -> None:
 
     test_logger = logging.getLogger("test")
     log_dir = get_log_dir()
-    create_secure_handler(log_dir / "test.log", 1024, 3)
+    handler = create_secure_handler(log_dir / "test.log", 1024, 3)
+    test_logger.addHandler(handler)
     original_handler_count = len(test_logger.handlers)
-    create_secure_handler(get_log_dir() / "test.log", 1024, 3)
+    # Try to add a duplicate handler
+    duplicate_handler = create_secure_handler(log_dir / "test.log", 1024, 3)
+    test_logger.addHandler(duplicate_handler)
+    # Handler count should not increase if duplicate prevention works
     assert len(test_logger.handlers) == original_handler_count
 
 

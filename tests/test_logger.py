@@ -310,7 +310,7 @@ def test_reset_logger_thread_safety(tmp_path):
 
 
 @pytest.mark.timeout(10)  # Set 10 second timeout
-def test_reset_logger_no_instance():
+def test_reset_logger_no_instance(caplog):
     """Test that reset_logger handles case when no logger is initialized."""
     # Ensure no logger instance exists
     global _LOGGER_INSTANCE
@@ -322,13 +322,16 @@ def test_reset_logger_no_instance():
         h for h in root_logger.handlers if type(h).__name__.startswith("LogCapture")
     ]
 
-    # Reset should work without error
-    reset_logger()
+    # Capture logs during reset
+    with caplog.at_level(logging.DEBUG):
+        reset_logger()
 
     # Verify state remains clean
     assert _LOGGER_INSTANCE is None
     # Only pytest handlers should remain
     assert len(logging.getLogger().handlers) == len(pytest_handlers)
+    # Assert no logs were emitted during reset
+    assert not caplog.records
 
 
 @pytest.mark.skipif(
@@ -430,7 +433,7 @@ def test_concurrent_logger_operations(tmp_path):
 
     # Verify log file integrity
     log_files = list(tmp_path.glob("**/*.log*"))
-    assert len(log_files) > 0, "No log files created"
+    assert log_files, "No log files created"
 
     # Verify file permissions
     for log_file in log_files:

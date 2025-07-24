@@ -76,10 +76,14 @@ def get_handler(logger: logging.Logger) -> RotatingFileHandler | None:
     Returns:
         Existing RotatingFileHandler or None if not found
     """
-    for handler in logger.handlers:
-        if isinstance(handler, RotatingFileHandler):
-            return handler
-    return None
+    return next(
+        (
+            handler
+            for handler in logger.handlers
+            if isinstance(handler, RotatingFileHandler)
+        ),
+        None,
+    )
 
 
 def add_timestamp(
@@ -288,7 +292,7 @@ class StructuredJsonFormatter(logging.Formatter):
 
         # Add extra fields
         event_dict = getattr(record, "event_dict", {})
-        log_data.update(event_dict)
+        log_data |= event_dict
 
         # Add exception info if present
         if record.exc_info:
@@ -459,6 +463,14 @@ def setup_logging(
 
 def get_logger() -> structlog.BoundLogger:
     """Get configured logger instance.
+
+    Uses a cached logger instance to avoid unnecessary reconfiguration.
+    """
+    global _LOGGER_INSTANCE
+    if '_LOGGER_INSTANCE' in globals() and _LOGGER_INSTANCE is not None:
+        return _LOGGER_INSTANCE
+    _LOGGER_INSTANCE = configure_logger()
+    return _LOGGER_INSTANCE
 
     Returns a cached logger instance to preserve context like correlation_id
     across calls. If no logger has been configured yet, configures one with
