@@ -78,6 +78,7 @@ def ensure_secure_permissions(path: Path) -> None:
     try:
         create_secure_file(path)
     except (OSError, PermissionError) as e:
-        logger.warning(f"Could not set secure permissions: {e}")
+        # Log structured error
+        logger.error("Failed to set file permissions", path=path, mode=oct(0o640), error=str(e))
         # Fallback to basic file creation
         path.touch(exist_ok=True)

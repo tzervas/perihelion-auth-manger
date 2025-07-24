@@ -4,28 +4,25 @@ import gc
 import inspect
 import json
 import logging
-from logging.handlers import RotatingFileHandler
 import os
-import platform
-import stat
 import sys
 import threading
 import uuid
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import structlog
-from structlog.types import EventDict, Processor
-from ..security import ensure_secure_permissions
-
+from structlog.types import EventDict
 
 # Global instances
 _LOGGER_INSTANCE = None
 _logger_lock = threading.Lock()
 
 
-def get_log_dir(base_dir: Union[str, Path, None] = None) -> Path:
+def get_log_dir(base_dir: str | Path | None = None) -> Path:
     """Get normalized log directory path.
     
     Args:
@@ -39,7 +36,9 @@ def get_log_dir(base_dir: Union[str, Path, None] = None) -> Path:
     return Path(base_dir).resolve()
 
 
-def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> RotatingFileHandler:
+def create_secure_handler(
+    log_path: Path, max_bytes: int, backup_count: int
+) -> RotatingFileHandler:
     """Create a secure RotatingFileHandler with proper permissions.
     
     Args:
@@ -67,7 +66,7 @@ def create_secure_handler(log_path: Path, max_bytes: int, backup_count: int) -> 
     return handler
 
 
-def get_handler(logger: logging.Logger) -> Optional[RotatingFileHandler]:
+def get_handler(logger: logging.Logger) -> RotatingFileHandler | None:
     """Check if a RotatingFileHandler already exists in the logger.
     
     Args:
@@ -84,7 +83,7 @@ def get_handler(logger: logging.Logger) -> Optional[RotatingFileHandler]:
 
 def add_timestamp(_, __, event_dict: EventDict) -> EventDict:
     """Add ISO 8601 timestamp."""
-    event_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
+    event_dict["timestamp"] = datetime.now(UTC).isoformat()
     return event_dict
 
 
@@ -94,7 +93,9 @@ def add_log_level(_, level: str, event_dict: EventDict) -> EventDict:
     return event_dict
 
 
-def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict) -> EventDict:
+def add_caller(
+    logger: structlog.BoundLogger, method_name, event_dict: EventDict
+) -> EventDict:
     """Add caller information using inspect.stack().
 
     Args:
@@ -145,12 +146,16 @@ def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict
                     # Try to get accurate function name for nested functions
                     if frame.f_code.co_code:
                         try:
-                            for obj in gc.get_referrers(frame.f_code):
-                                if inspect.isfunction(obj) and obj.__code__ is frame.f_code:
-                                    caller_info["function"] = obj.__name__
-                                    break
-                        except Exception:
-                            pass  # Fall back to frame's function name
+            for obj in gc.get_referrers(frame.f_code):
+                if (
+                    inspect.isfunction(obj)
+                    and obj.__code__ is frame.f_code
+                ):
+                    caller_info["function"] = obj.__name__
+                    break
+                        except Exception as e:
+                            # Fall back to frame's function name
+                            logging.debug(f"Error retrieving function name: {e!r}")
                     
                     event_dict["caller"] = caller_info
                     return event_dict
@@ -161,7 +166,7 @@ def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict
 
     except Exception as e:
         # Handle any unexpected errors
-        event_dict["caller"]["error"] = f"Error getting caller info: {str(e)}"
+        event_dict["caller"]["error"] = f"Error getting caller info: {e!r}"
     finally:
         # Clean up frame references
         try:
@@ -169,8 +174,10 @@ def add_caller(logger: structlog.BoundLogger, method_name, event_dict: EventDict
                 for frame_info in frames:
                     if hasattr(frame_info, 'frame'):
                         frame_info.frame = None
-        except Exception:
-            pass  # Ignore cleanup errors
+        except Exception as e:
+            logging.debug(
+                "Error cleaning up frame references: {e!r}"
+            )
             
     return event_dict
 
@@ -186,7 +193,8 @@ def add_thread_info(_: Any, __: Any, event_dict: EventDict) -> EventDict:
 
 
 def sanitize_keys(event_dict: dict, sensitive_keys: set) -> dict:
-    """Sanitize dictionary by redacting sensitive keys, using case-insensitive matching and handling nested structures.
+    """Sanitize dictionary by redacting sensitive keys, \
+   using case-insensitive matching and handling nested structures.
     
     Args:
         event_dict: Dictionary to sanitize
@@ -219,7 +227,9 @@ def sanitize_event_dict(_, __, event_dict: EventDict) -> EventDict:
     return sanitized
 
 
-def rotate_logs(log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5) -> None:
+def rotate_logs(
+    log_dir: Path, max_bytes: int = 50 * 1024 * 1024, backup_count: int = 5
+) -> None:
     """Configure log rotation and retention."""
     log_file = log_dir / "perihelion.log"
     
@@ -239,7 +249,7 @@ class StructuredJsonFormatter(logging.Formatter):
         # Get basic record attributes
         data = {
             "timestamp": datetime.fromtimestamp(
-                record.created, timezone.utc
+                record.created, UTC
             ).isoformat(),
             "level": record.levelname,
             "logger": record.name,
@@ -263,10 +273,10 @@ class StructuredJsonFormatter(logging.Formatter):
 
 def configure_logger(
     log_level: str = "INFO",
-    correlation_id: Optional[str] = None,
+    correlation_id: str | None = None,
     max_log_size: int = 50 * 1024 * 1024,  # 50 MB
     backup_count: int = 5,
-    base_dir: Optional[Union[str, Path]] = None,
+    base_dir: str | Path | None = None,
 ) -> structlog.BoundLogger:
     """Configure and return a new logger instance.
 
@@ -332,21 +342,19 @@ def configure_logger(
     logger = structlog.get_logger()
 
     # Add correlation ID
-    logger = logger.bind(correlation_id=correlation_id or str(uuid.uuid4()))
-
-    return logger
+    return logger.bind(correlation_id=correlation_id or str(uuid.uuid4()))
 
 
 
 def setup_logging(
     log_level: str = "INFO",
-    correlation_id: Optional[str] = None,
+    correlation_id: str | None = None,
     max_log_size: int = 50 * 1024 * 1024,  # 50 MB
     backup_count: int = 5,
-    base_dir: Optional[Union[str, Path]] = None,
+    base_dir: str | Path | None = None,
     _keep_handlers: bool = False,
     _return_handler_count: bool = False,
-) -> Union[structlog.BoundLogger, tuple[structlog.BoundLogger, int]]:
+) -> structlog.BoundLogger | tuple[structlog.BoundLogger, int]:
     """Setup structured logging.
 
     Args:
@@ -356,10 +364,12 @@ def setup_logging(
         backup_count: Number of backup files to keep
         base_dir: Optional base directory for log files
         _keep_handlers: Internal flag to control whether existing handlers are preserved
-        _return_handler_count: Internal flag to control return type (logger vs logger+count)
+        _return_handler_count: Internal flag to control return type
+        (logger vs logger+count)
 
     Returns:
-        By default, returns the configured logger instance. If _return_handler_count is True,
+        By default, returns the configured logger instance.
+        If _return_handler_count is True,
         returns a tuple of (logger, handler_count).
     """
     global _LOGGER_INSTANCE
@@ -373,17 +383,14 @@ def setup_logging(
     if not _keep_handlers:
         # Reset handlers first
         for handler in root_logger.handlers[:]:
-            try:
+            with suppress(Exception):
                 handler.close()
-            except Exception:
-                pass  # Ignore errors closing handlers
-            try:
+            with suppress(Exception):
                 root_logger.removeHandler(handler)
-            except Exception:
-                pass  # Ignore errors removing handlers
 
         # Reset structlog configuration
-        structlog.reset_defaults()
+        with suppress(Exception):
+            structlog.reset_defaults()
 
         # Configure new logger
         new_logger = configure_logger(
@@ -441,12 +448,17 @@ def get_logger() -> structlog.BoundLogger:
                 _logger_lock.release()
         else:
             # Lock acquisition timed out, proceed without lock
-            logging.warning("get_logger: Lock acquisition timed out, proceeding without lock")
+            logging.warning(
+                "get_logger: Lock acquisition timed out, forcing update"
+            )
             if _LOGGER_INSTANCE is None:
                 _LOGGER_INSTANCE = setup_logging()
             return _LOGGER_INSTANCE
-    except Exception as e:
-        # Handle any unexpected errors, ensure we have a logger
+                except Exception as e:
+                    _LOGGER_INSTANCE = setup_logging()
+                return _LOGGER_INSTANCE
+        except Exception as e:
+            logging.error(f"Unexpected error in get_logger: {e}")
         logging.error(f"Unexpected error in get_logger: {e}")
         if _LOGGER_INSTANCE is None:
             _LOGGER_INSTANCE = setup_logging()
@@ -474,21 +486,15 @@ def reset_logger() -> None:
     
     # First clean up handlers and structlog outside the lock
     for handler in handlers:
-        try:
+        with suppress(Exception):
             handler.close()
-        except Exception:
-            pass  # Ignore errors closing handlers
         
-        try:
+        with suppress(Exception):
             if handler in root_logger.handlers:
                 root_logger.removeHandler(handler)
-        except Exception:
-            pass  # Ignore errors removing handlers
     
-    try:
+    with suppress(Exception):
         structlog.reset_defaults()
-    except Exception:
-        pass  # Ignore structlog reset errors
     
     # Then do minimal work under the lock
     try:
@@ -497,14 +503,16 @@ def reset_logger() -> None:
                 if _LOGGER_INSTANCE is not None:
                     try:
                         old_correlation_id = _LOGGER_INSTANCE._context.get('correlation_id')
-                    except AttributeError:
-                        pass
+                    except AttributeError as e:
+                        logging.debug(f"Failed to retrieve correlation_id: {e}")
                 _LOGGER_INSTANCE = None
             finally:
                 _logger_lock.release()
         else:
             # Lock acquisition timed out
-            logging.warning("reset_logger: Lock acquisition timed out, forcing reset")
+            logging.warning(
+                "reset_logger: Lock acquisition timed out, forcing reset"
+            )
             _LOGGER_INSTANCE = None
     except Exception as e:
         # Handle any unexpected errors, still ensure instance is cleared
@@ -516,8 +524,8 @@ def audit_event(
     event_type: str,
     user: str,
     success: bool,
-    details: Optional[Dict[str, Any]] = None,
-    error: Optional[Exception] = None,
+    details: dict[str, Any] | None = None,
+    error: Exception | None = None,
 ) -> None:
     """Log an audit event.
 
@@ -548,7 +556,12 @@ def audit_event(
 
         if details:
             # Sanitize sensitive data
-            event["details"] = sanitize_keys(details, {"password", "token", "secret", "key", "credential", "api_key"})
+            event["details"] = sanitize_keys(
+                details, {
+                    "password", "token", "secret",
+                    "key", "credential", "api_key"
+                }
+            )
 
         if error:
             event["error"] = {

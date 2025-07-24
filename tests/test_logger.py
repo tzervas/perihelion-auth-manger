@@ -4,29 +4,26 @@ import inspect
 import logging
 import sys
 import types
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from unittest import mock
 
 import pytest
-import structlog
+
+from perihelion_auth_manager.audit.logger import (
+    _LOGGER_INSTANCE,
+    add_caller,
+    get_log_dir,
+    get_logger,
+    reset_logger,
+    setup_logging,
+)
 
 # Enable fail-fast mode and add timeout to all tests
 pytest.register_assert_rewrite('pytest')
 pytest.fail_fast = True
-from logging.handlers import RotatingFileHandler
-from structlog.types import EventDict
 
-from perihelion_auth_manager.audit.logger import (
-    add_caller,
-    setup_logging,
-    get_logger,
-    reset_logger,
-    _LOGGER_INSTANCE
-)
-
-
-
-
+# Add reset_logging fixture
 @pytest.fixture(autouse=True)
 def reset_logging():
     """Reset logging state between tests."""
@@ -46,7 +43,6 @@ def cleanup_logs():
     for f in log_dir.glob("*.log*"):
         f.unlink()
 
-from perihelion_auth_manager.audit.logger import get_log_dir
 
 
 @pytest.fixture
@@ -104,8 +100,7 @@ def test_add_caller_frame_detection():
             (),            # cellvars
             ()             # freevars
         )
-        frame = types.FrameType(code, {}, None)
-        return frame
+        return types.FrameType(code, {}, None)
 
     # Test with known frames
     with mock.patch("inspect.stack") as mock_stack:
@@ -151,47 +146,33 @@ def test_add_caller_edge_cases():
     def wrapper():
         return nested_call()
     
-    # Create artificial frame info objects
-    def mock_frame(name, filename):
-        # Python 3.13 requires 16 arguments for CodeType
-        code = types.CodeType(
-            0,             # argcount
-            0,             # posonlyargcount
-            0,             # kwonlyargcount
-            0,             # nlocals
-            1,             # stacksize
-            0,             # flags
-            b"",          # bytecode
-            (),            # consts
-            (),            # names
-            (),            # varnames
-            str(filename), # filename
-            str(name),     # name
-            1,             # firstlineno
-            b"",          # lnotab
-            (),            # cellvars
-            ()             # freevars
-        )
-        frame = types.FrameType(code, {}, None)
-        return frame
+    # Test normal nested calls
+    result = wrapper()
+    assert "caller" in result
+    assert result["caller"]["function"] == "nested_call"
     
     # Test when all frames are from logging
     with mock.patch("inspect.stack") as mock_stack:
-        frame_infos = [
-            inspect.FrameInfo(
-                mock_frame("add_caller", "structlog/xyz.py"),
-                "structlog/xyz.py", 1, "add_caller", ["def add_caller():"], 0
-            ),
-            inspect.FrameInfo(
-                mock_frame("log", "logging/abc.py"),
-                "logging/abc.py", 2, "log", ["def log():"], 0
-            ),
-            inspect.FrameInfo(
-                mock_frame("handler", "logger.py"),
-                "logger.py", 3, "handler", ["def handler():"], 0
-            )
+        mock_stack.return_value = [
+            mock.Mock(frame=mock.Mock(
+                f_code=mock.Mock(
+                    co_filename="structlog/xyz.py",
+                    co_name="xyz_func"
+                )
+            )),
+            mock.Mock(frame=mock.Mock(
+                f_code=mock.Mock(
+                    co_filename="logging/abc.py",
+                    co_name="abc_func"
+                )
+            )),
+            mock.Mock(frame=mock.Mock(
+                f_code=mock.Mock(
+                    co_filename="logger.py",
+                    co_name="logger_func"
+                )
+            ))
         ]
-        mock_stack.return_value = frame_infos
         result = add_caller(logger, None, {})
         assert "caller" in result
         assert "error" in result["caller"]
@@ -236,8 +217,10 @@ def test_log_rotation(tmp_path, cleanup_logs, caplog):
             file_handler = h
             break
     else:
-        assert False, "No RotatingFileHandler found among handlers: " + \
+        pytest.fail(
+            "No RotatingFileHandler found among handlers: " + 
             ", ".join(type(h).__name__ for h in root_logger.handlers)
+        )
     
     # Generate enough logs to trigger rotation
     large_msg = "x" * (max_size // 10)  # Each message is 1/10th max size
@@ -292,7 +275,7 @@ def test_reset_logger_thread_safety(tmp_path):
     import time
     
     def setup_and_reset():
-        logger = setup_logging(base_dir=tmp_path / "logs")
+        setup_logging(base_dir=tmp_path / "logs")
         time.sleep(0.1)  # Simulate some work
         reset_logger()
     
@@ -314,7 +297,10 @@ def test_reset_logger_thread_safety(tmp_path):
     
     # Get remaining handlers (should only be pytest fixtures)
     root_logger = logging.getLogger()
-    pytest_handlers = [h for h in root_logger.handlers if type(h).__name__.startswith('LogCapture')]
+    pytest_handlers = [
+        h for h in root_logger.handlers 
+        if type(h).__name__.startswith('LogCapture')
+    ]
     assert len(root_logger.handlers) == len(pytest_handlers)
 
 
@@ -327,14 +313,18 @@ def test_reset_logger_no_instance():
     
     # Get initial number of pytest handlers
     root_logger = logging.getLogger()
-    pytest_handlers = [h for h in root_logger.handlers if type(h).__name__.startswith('LogCapture')]
+    pytest_handlers = [
+        h for h in root_logger.handlers 
+        if type(h).__name__.startswith('LogCapture')
+    ]
     
     # Reset should work without error
     reset_logger()
     
     # Verify state remains clean
     assert _LOGGER_INSTANCE is None
-    assert len(logging.getLogger().handlers) == len(pytest_handlers)  # Only pytest handlers should remain
+    # Only pytest handlers should remain
+    assert len(logging.getLogger().handlers) == len(pytest_handlers)
 
 
 @pytest.mark.skipif(sys.platform == "win32",
@@ -377,14 +367,16 @@ def test_logging_directory_permissions(tmp_path, cleanup_logs):
     rotated_file = log_dir / "perihelion.log.1"
     assert rotated_file.exists(), "Rotated file not created"
     rotated_mode = oct(rotated_file.stat().st_mode & 0o777)
-    assert rotated_mode.endswith('640'), f"Expected 640 permissions on rotated file, got {rotated_mode}"
+    assert rotated_mode.endswith('640'), (
+        f"Expected 640 permissions on rotated file, got {rotated_mode}"
+    )
 
 
 @pytest.mark.timeout(10)  # Set 10 second timeout
 def test_reset_logger_multiple_calls(tmp_path):
     """Test that reset_logger can be called multiple times safely."""
     # Setup initial logger
-    logger = setup_logging(base_dir=tmp_path / "logs")
+    setup_logging(base_dir=tmp_path / "logs")
     
     # Call reset multiple times
     for _ in range(3):
@@ -403,9 +395,9 @@ def test_reset_logger_multiple_calls(tmp_path):
 @pytest.mark.timeout(30)  # Set 30 second timeout for concurrent operations
 def test_concurrent_logger_operations(tmp_path):
     """Test thread safety of logging operations."""
-    import threading
-    import queue
     import os
+    import queue
+    import threading
     
     errors = queue.Queue()
     
