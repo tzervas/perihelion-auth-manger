@@ -58,11 +58,14 @@ build-backend = "hatchling.build"
 [tool.ruff]
 line-length = 88
 target-version = "py312"
+
+[tool.ruff.lint]
 select = ["E", "F", "B", "I", "N", "UP", "S", "BLE", "FBT", "A", "C4", "T20", "RET", "SIM", "RUF"]
 ignore = []
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]  # Allow assertions in tests
+"src/perihelion_auth_manager/audit/events.py" = ["S105"]  # Allow event type strings
 
 [tool.black]
 line-length = 88
@@ -70,6 +73,7 @@ target-version = ["py312"]
 include = '\.pyi?$'
 
 [tool.mypy]
+ignore_missing_imports = true
 python_version = "3.12"
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
@@ -88,3 +92,15 @@ addopts = "-ra -q --cov=perihelion_auth_manager --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "mypy>=1.16.1",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.2.1",
+    "pytest-timeout>=2.4.0",
+    "ruff>=0.12.1",
+    "structlog>=25.4.0",
+]
