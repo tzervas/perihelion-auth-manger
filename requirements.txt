@@ -6,7 +6,7 @@ anyio==4.9.0
     # via
     #   httpx
     #   starlette
-authlib==1.6.0
+authlib==1.6.6
     # via perihelion-auth-manager (pyproject.toml)
 certifi==2025.6.15
     # via
@@ -74,7 +74,7 @@ simpleeval==1.0.3
     # via pycasbin
 sniffio==1.3.1
     # via anyio
-starlette==0.47.2
+starlette==0.49.1
     # via fastapi
 structlog==25.4.0
     # via perihelion-auth-manager (pyproject.toml)
