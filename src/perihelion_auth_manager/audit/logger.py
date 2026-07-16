@@ -464,14 +464,6 @@ def setup_logging(
 def get_logger() -> structlog.BoundLogger:
     """Get configured logger instance.
 
-    Uses a cached logger instance to avoid unnecessary reconfiguration.
-    """
-    global _LOGGER_INSTANCE
-    if '_LOGGER_INSTANCE' in globals() and _LOGGER_INSTANCE is not None:
-        return _LOGGER_INSTANCE
-    _LOGGER_INSTANCE = configure_logger()
-    return _LOGGER_INSTANCE
-
     Returns a cached logger instance to preserve context like correlation_id
     across calls. If no logger has been configured yet, configures one with
     default settings.

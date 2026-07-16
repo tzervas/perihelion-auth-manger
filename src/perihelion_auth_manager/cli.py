@@ -32,11 +32,11 @@ def typed_option(
     param_name: str,
     *,
     prompt: bool = False,
-    help_text: str = "",
+    help: str = "",  # noqa: A002 — match click.option API used by call sites
     **kwargs: Any,
 ) -> ClickDecorator:
     """Create a typed Click option decorator.
-    
+
     Args:
         param_name: The parameter name/flag
         prompt: Whether to prompt for input
@@ -45,22 +45,22 @@ def typed_option(
     """
     return cast(
         ClickDecorator,
-        click.option(param_name, prompt=prompt, help=help_text, **kwargs)
+        click.option(param_name, prompt=prompt, help=help, **kwargs),
     )
 
 
 def typed_password_option(
     *,
-    help_text: str = "",
+    help: str = "",  # noqa: A002 — match click.password_option API
     **kwargs: Any,
 ) -> ClickDecorator:
     """Create a typed Click password option decorator.
-    
+
     Args:
         help: Help text for the option
         **kwargs: Additional Click option parameters
     """
-    return cast(ClickDecorator, click.password_option(help=help_text, **kwargs))
+    return cast(ClickDecorator, click.password_option(help=help, **kwargs))
 
 
 @click.group()

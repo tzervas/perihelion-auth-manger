@@ -3,7 +3,13 @@
 import platform
 from typing import Optional, Type
 
-from .base import CredentialStore
+from .base import (
+    CredentialMetadata,
+    CredentialNotFoundError,
+    CredentialStore,
+    CredentialStoreError,
+    SecureCredential,
+)
 from .linux import LibSecretStore
 from .macos import KeychainStore
 from .windows import WindowsCredentialStore
@@ -36,7 +42,11 @@ def get_platform_store(store_class: Optional[Type[CredentialStore]] = None) -> C
 
 
 __all__ = [
+    "CredentialMetadata",
+    "CredentialNotFoundError",
     "CredentialStore",
+    "CredentialStoreError",
+    "SecureCredential",
     "LibSecretStore",
     "KeychainStore",
     "WindowsCredentialStore",

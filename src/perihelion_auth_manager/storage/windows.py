@@ -4,7 +4,7 @@ import ctypes
 import json
 import os
 from datetime import datetime
-from typing import Optional
+from typing import Dict, Optional
 from uuid import UUID
 
 import keyring
