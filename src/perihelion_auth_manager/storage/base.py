@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, Optional, Protocol, runtime_checkable
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field
@@ -23,7 +23,7 @@ class CredentialMetadata(BaseModel):
     labels: Dict[str, str] = Field(default_factory=dict)
     platform: str
     username: str
-    credential_id: UUID = Field(default_factory=UUID.uuid4)
+    credential_id: UUID = Field(default_factory=uuid4)
 
 
 @runtime_checkable
